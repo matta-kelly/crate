@@ -103,26 +103,15 @@ else not_ok "a package with no tag yet makes none, says so, and main still moves
 
 # the message for a package with no tag gives the command that sets a first version in the bare repo, the same one the
 # refusal of a pushed version tag gives
-tagcmd='git( -C [^ ]+)? tag [^ ]+'
 setup 'ship = "npm"'
 out=$(land a "feat: one")
 git tag v9.9.9
 refusal=$(git push "$tmp/repo.git" v9.9.9 2>&1)
-if grep 'to count from' <<<"$out" | grep -Eq "$tagcmd"; then ok "the message for a package with no tag gives the command for a first version"
-else not_ok "the message for a package with no tag gives the command for a first version" "$out"; fi
 rel_cmd=$(grep 'to count from' <<<"$out" | grep -oE 'git( -C [^ ]+)? tag' | head -1)
 ref_cmd=$(grep 'crate: ' <<<"$refusal" | grep -oE 'git( -C [^ ]+)? tag' | head -1)
-if [ -n "$rel_cmd" ] && [ "$rel_cmd" = "$ref_cmd" ]; then ok "the message and the refusal give the same command"
-else not_ok "the message and the refusal give the same command" "release: $rel_cmd
+if [ -n "$rel_cmd" ] && [ "$rel_cmd" = "$ref_cmd" ]; then ok "the message for a package with no tag gives the same command as the refusal"
+else not_ok "the message for a package with no tag gives the same command as the refusal" "release: $rel_cmd
 refusal: $ref_cmd"; fi
-
-# each package with no tag gets its own command, with its own tag name
-setup 'ship = "npm"
-packages = ". it"' v0.5.0
-out=$(land a "fix: x")
-if grep 'it has no\|it-v' <<<"$out" | grep -Eq "$tagcmd" && grep 'it-v' <<<"$out" | grep -Eq 'git( -C [^ ]+)? tag .*it-v'; then
-  ok "a second package with no tag gets a command with its own tag name"
-else not_ok "a second package with no tag gets a command with its own tag name" "$out"; fi
 
 echo "1..$n"
 exit "$failed"

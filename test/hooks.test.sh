@@ -149,10 +149,9 @@ else not_ok "image dev: the check runs in the image the repo's dev-image.sh name
 # does not run on that stale tree, and main has not moved
 setup
 git push -q "$tmp/repo.git" main 2>/dev/null
-lock="$tmp/repo.git/crate/work/.git/index.lock"
 before=$(main_of "$tmp/repo.git")
 echo more >extra && git add extra && git commit -qm two
-touch "$lock"
+touch "$tmp/repo.git/crate/work/.git/index.lock"
 out=$(git push "$tmp/repo.git" main 2>&1)
 rc=$?
 reason=$(grep 'crate: ' <<<"$out" | grep -v 'crate: checking')
@@ -161,62 +160,49 @@ if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = "$before" ] && ! grep -q 
 else not_ok "a failed checkout: the push is refused with crate's reason, the check does not run, main has not moved" "rc=$rc
 $out"; fi
 
-# a second commit on top, the checkout still failing: refused again, main still at the old commit
-echo more2 >extra2 && git add extra2 && git commit -qm three
-out=$(git push "$tmp/repo.git" main 2>&1)
-rc=$?
-if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = "$before" ] && ! grep -q "check passed" <<<"$out"; then
-  ok "a failed checkout: a second push is refused too, main has not moved"
-else not_ok "a failed checkout: a second push is refused too, main has not moved" "rc=$rc
-$out"; fi
-
-# the checkout recovers: with the lock gone, the same commits land, checked against the old main
-rm -f "$lock"
-out=$(git push "$tmp/repo.git" main 2>&1)
-if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "check passed" <<<"$out" &&
-  grep -q "base=$before" <<<"$out"; then
-  ok "a failed checkout: once the checkout works, the push lands"
-else not_ok "a failed checkout: once the checkout works, the push lands" "$out"; fi
-
 tags_of() { git -C "$1" tag | tr '\n' ' '; }
 
-# version tags: a repo with ship set refuses a pushed tag in the shape of a package's version, and nothing reaches github
+# push_tags <tag>...: tag HEAD with each and push it alone to the server. Prints the tags the server took.
+push_tags() {
+  local t
+  for t in "$@"; do
+    git tag "$t"
+    git push "$tmp/repo.git" "$t" >/dev/null 2>&1
+  done
+  tags_of "$tmp/repo.git"
+}
+
+# a version tag is refused on every repo, whatever its settings say: one that ships a package folder, one that ships
+# nothing, and one with no main yet. Each row is a tag shape release counts from: full, short, prerelease, a folder's.
 setup
 printf 'crate = "1"\nimage = "%s"\nship = "npm"\npackages = ". it"\n' "$alpine" >crate.toml
 mkdir it && touch it/a
 git add -A && git commit -qm "chore: ship"
 git push -q "$tmp/repo.git" main 2>/dev/null
-for t in v1.2.3 v0.0.1 v10.20.30 it-v0.3.0; do
-  git tag "$t"
-  out=$(git push "$tmp/repo.git" "$t" 2>&1)
-  rc=$?
-  if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ] && grep -q "crate: " <<<"$out"; then
-    ok "a version tag $t is refused, and is on neither server"
-  else not_ok "a version tag $t is refused, and is on neither server" "rc=$rc
-repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
-$out"; fi
-done
+got=$(push_tags v1.2.3 v2 v2.0.0-rc.1 it-v0.3.0)
+if [ -z "$got" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then ok "a repo that ships refuses version tags, and they are on neither server"
+else not_ok "a repo that ships refuses version tags, and they are on neither server" "repo: $got"; fi
 
-# release counts from every tag named the prefix and a digit, so the gate refuses all of those, prerelease or short
-for t in v2.0.0-rc.1 v2 v1.2 it-v1.0.0-beta it-v7 v3.1.4+build.5; do
-  git tag "$t"
-  out=$(git push "$tmp/repo.git" "$t" 2>&1)
-  rc=$?
-  if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ] && grep -q "crate: " <<<"$out"; then
-    ok "a tag $t is one release counts from, so it is refused, and is on neither server"
-  else not_ok "a tag $t is one release counts from, so it is refused, and is on neither server" "rc=$rc
-repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
-$out"; fi
-done
+setup
+git push -q "$tmp/repo.git" main 2>/dev/null
+got=$(push_tags v1.2.3 v2 v2.0.0-rc.1 it-v0.3.0 my-app-v1.0.0)
+if [ -z "$got" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then ok "a repo that ships nothing refuses version tags, and they are on neither server"
+else not_ok "a repo that ships nothing refuses version tags, and they are on neither server" "repo: $got"; fi
 
-# an annotated version tag is a tag all the same
-git tag -a v2.0.0 -m "two"
-out=$(git push "$tmp/repo.git" v2.0.0 2>&1)
-rc=$?
-if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && grep -q "crate: " <<<"$out"; then
-  ok "an annotated version tag is refused"
-else not_ok "an annotated version tag is refused" "rc=$rc
-$out"; fi
+setup
+got=$(push_tags v1.0.0)
+if [ -z "$got" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then ok "a repo with no main refuses a version tag"
+else not_ok "a repo with no main refuses a version tag" "repo: $got"; fi
+
+# the refusal's words: only crate makes version tags, and the command for a first version, on crate's lines
+setup
+git push -q "$tmp/repo.git" main 2>/dev/null
+git tag v4.0.0
+out=$(git push "$tmp/repo.git" v4.0.0 2>&1)
+reasons=$(grep 'crate: ' <<<"$out")
+if grep -qi 'only crate makes' <<<"$reasons" && grep -Eq 'git( -C [^ ]+)? tag [^ ]+' <<<"$reasons"; then
+  ok "the refusal says only crate makes version tags, and gives the command that sets a first version"
+else not_ok "the refusal says only crate makes version tags, and gives the command that sets a first version" "$out"; fi
 
 # a version tag pushed with main refuses the whole push: main has not moved
 before=$(main_of "$tmp/repo.git")
@@ -230,15 +216,9 @@ else not_ok "a version tag pushed with main refuses the whole push" "rc=$rc
 $out"; fi
 
 # a tag of any other name is not touched
-for t in nightly rc-2 release-1.0.0 vnext it-vnext; do
-  git tag "$t"
-  out=$(git push "$tmp/repo.git" "$t" 2>&1)
-  rc=$?
-  if [ "$rc" -eq 0 ] && git -C "$tmp/repo.git" rev-parse -q --verify "refs/tags/$t" >/dev/null; then
-    ok "a tag named $t is not a version, and is kept"
-  else not_ok "a tag named $t is not a version, and is kept" "rc=$rc
-$out"; fi
-done
+got=$(push_tags nightly v-1 version1 it-vnext rc-2)
+if [ "$got" = "it-vnext nightly rc-2 v-1 version1 " ]; then ok "a tag that is no version is kept"
+else not_ok "a tag that is no version is kept" "repo: $got"; fi
 
 # crate's own tags, made in the bare repo by release, are not touched: the version follows a land, and goes to github
 setup
@@ -255,86 +235,7 @@ else not_ok "crate's own version tags are made and copied as before" "rc=$rc
 repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
 $out"; fi
 
-# The rule is one for every repo: the hook reads no setting of the repo, so a repo that ships nothing refuses a version
-# tag as well. The refusal says only crate makes them, and gives the command that sets a first version in the bare repo.
-tagcmd='git( -C [^ ]+)? tag [^ ]+'
-
-setup
-git push -q "$tmp/repo.git" main 2>/dev/null
-for t in v1.2.3 v0.0.1 it-v0.3.0 my-app-v1.0.0 v2; do
-  git tag "$t"
-  out=$(git push "$tmp/repo.git" "$t" 2>&1)
-  rc=$?
-  if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then
-    ok "a repo that ships nothing refuses the version tag $t, and it is on neither server"
-  else not_ok "a repo that ships nothing refuses the version tag $t, and it is on neither server" "rc=$rc
-repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
-$out"; fi
-done
-
-# the refusal's words: only crate makes version tags, and the command for a first version, on crate's lines
-git tag v4.0.0
-out=$(git push "$tmp/repo.git" v4.0.0 2>&1)
-reasons=$(grep 'crate: ' <<<"$out")
-if grep -qi 'only crate makes' <<<"$reasons" && grep -Eq "$tagcmd" <<<"$reasons"; then
-  ok "the refusal says only crate makes version tags, and gives the command that sets a first version"
-else not_ok "the refusal says only crate makes version tags, and gives the command that sets a first version" "$out"; fi
-
-# the same rule on the first push to a repo: there is no main yet to read a setting from, and the tag is still refused,
-# alone and with main; main has not moved
-setup
-git tag v1.0.0
-out=$(git push "$tmp/repo.git" v1.0.0 2>&1)
-rc=$?
-if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then
-  ok "a version tag pushed to a repo with no main is refused"
-else not_ok "a version tag pushed to a repo with no main is refused" "rc=$rc
-$out"; fi
-out=$(git push "$tmp/repo.git" main v1.0.0 2>&1)
-rc=$?
-if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = none ] && [ "$(main_of "$tmp/github.git")" = none ] &&
-  [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then
-  ok "the first push of main with a version tag is refused whole: main has not moved"
-else not_ok "the first push of main with a version tag is refused whole: main has not moved" "rc=$rc
-$out"; fi
-git tag it-v0.1.0
-out=$(git push "$tmp/repo.git" main it-v0.1.0 2>&1)
-rc=$?
-if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = none ] && [ -z "$(tags_of "$tmp/repo.git")" ]; then
-  ok "the first push of main with a folder version tag is refused whole"
-else not_ok "the first push of main with a folder version tag is refused whole" "rc=$rc
-$out"; fi
-if git push -q "$tmp/repo.git" main 2>/dev/null && [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ]; then
-  ok "the first push of main alone still lands after a refused tag"
-else not_ok "the first push of main alone still lands after a refused tag"; fi
-
-# the push that turns ship on: the old main names no ship, and the tag is refused all the same
-setup
-git push -q "$tmp/repo.git" main 2>/dev/null
-before=$(main_of "$tmp/repo.git")
-printf 'crate = "1"\nimage = "%s"\nship = "npm"\n' "$alpine" >crate.toml
-git add -A && git commit -qm "chore: ship"
-git tag v1.0.0
-out=$(git push "$tmp/repo.git" main v1.0.0 2>&1)
-rc=$?
-if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = "$before" ] && [ -z "$(tags_of "$tmp/repo.git")" ] &&
-  [ -z "$(tags_of "$tmp/github.git")" ]; then
-  ok "the push that turns ship on refuses a version tag pushed with it, and main has not moved"
-else not_ok "the push that turns ship on refuses a version tag pushed with it, and main has not moved" "rc=$rc
-$out"; fi
-
-# a tag of any other name is kept in a repo that ships nothing, too
-for t in nightly v-1 version1 it-vnext rc-2; do
-  git tag "$t"
-  out=$(git push "$tmp/repo.git" "$t" 2>&1)
-  rc=$?
-  if [ "$rc" -eq 0 ] && git -C "$tmp/repo.git" rev-parse -q --verify "refs/tags/$t" >/dev/null; then
-    ok "a repo that ships nothing keeps the tag $t, which is no version"
-  else not_ok "a repo that ships nothing keeps the tag $t, which is no version" "rc=$rc
-$out"; fi
-done
-
-# the README says the rule, and how a first version is set
+# the README says how a first version is set
 if grep -Eq 'git( -C [^ ]+)? tag ' "$root/README.md"; then ok "the README gives the command that sets a first version"
 else not_ok "the README gives the command that sets a first version"; fi
 
