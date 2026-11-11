@@ -24,6 +24,13 @@ and `scripts/check.sh`, which reads `CHECK_BASE` to run only the sets a change t
 The check's checkout and its packages are kept between pushes (`<bare>/crate/work`, and the volume
 `crate-<repo>-node-modules`), so a change that leaves the lockfile alone installs nothing.
 
+## Changing crate
+
+crate stays outside the gate it ships, so a broken hook never blocks its own fix. A change lands on GitHub's main after
+`just check` passes, and reaches a server only by a release: `just release <major.minor.patch>` checks, tags the version,
+and moves the major tag (`v1`) to it. A server runs crate at the major tag. A bad release is undone by moving the major
+tag back to the last good version.
+
 ## Check
 
 `just check`: shellcheck, then `test/hooks.test.sh` on real git and podman.
