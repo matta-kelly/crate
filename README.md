@@ -7,7 +7,9 @@ only to a commit whose check passed on the exact tree main becomes. A land is a 
   `CHECK_BASE` set to the old main. Red refuses the push and sends the check's output to the pusher. One check at a time
   per repo (the merge queue); a push that waited while main moved is told to pull with rebase and push again
 - `hooks/post-receive`: after main moves, push it to the remote `github`, the public copy, then release it
-  ([Release](#release))
+  ([Release](#release)). A repo with postsubmit runs it in the background first, and is released only when it passes
+  ([Postsubmit](#postsubmit))
+- `bin/crate postsubmit <bare>`: the repo's postsubmit on main as it stands; post-receive starts it
 - `bin/crate apply <file|->`: make a server match its declaration: crate's version tag (`CRATE_VERSION`), where the bare repos live (`GIT_HOME`), where their copies go (`GITHUB_BASE`), and the repos (`REPOS`). Safe to run again: it moves this checkout to the version, inits each repo, and seeds a new one from GitHub
 - `bin/crate init <bare> [<github url>]`: make or take a bare repo, and put the hooks and rules on it (fast-forward only, no deletion). With an ssh GitHub url, it makes the repo's own deploy key on this machine and prints its public half
 - `lib/crate.sh`: what the hooks share
@@ -22,12 +24,14 @@ image = "dev"    # its own dev image (scripts/dev-image.sh local), or an image r
 timeout = "900"  # seconds a check may run; past it, the check is stopped and the push refused
 ship = "npm"     # how a version ships; a repo that names none has no versions
 packages = ". it"  # the package folders, "." when it names none
+postsubmit = "e2e" # the slow sets, run as scripts/check.sh <sets> after each land; none when it names none
+postsubmit_timeout = "3600"  # seconds postsubmit may run
 ```
 
 and `scripts/check.sh`, which reads `CHECK_BASE` to run only the sets a change touched.
 
 The check's checkout and its packages are kept between pushes (`<bare>/crate/work`, and the volume
-`crate-<repo>-node-modules`), so a change that leaves the lockfile alone installs nothing.
+`crate-<repo>-check-node-modules`), so a change that leaves the lockfile alone installs nothing.
 
 ## Release
 
@@ -49,6 +53,17 @@ Commits 1.0) as semver (SemVer 2.0). The tag is the truth: package.json's versio
   (for `npm`, by npm's trusted publishing: no token, with provenance). GitHub's tag ruleset lets the deploy key make
   version tags
 
+## Postsubmit
+
+The slow sets, too slow to hold a land, run on each new main after it moves, in the background, one run at a time. A
+run that waited tests main as it stands, so it covers every land since the last.
+
+- green: main is the last green, and is released, so no version is made from a main postsubmit failed
+- red: one commit on main undoes every commit since the last green main, landed through the check like any push. The
+  failure is kept: its last lines in the revert's message, and all of it in `<bare>/crate/postsubmit/<sha>.log`
+- a main whose tree is the last green's (the revert itself) passes with no run
+- a revert that does not apply, or no green main to go back to, leaves main as it is, and the log says it needs a hand
+
 ## Changing crate
 
 crate stays outside the gate it ships, so a broken hook never blocks its own fix. A change lands on GitHub's main after
@@ -58,5 +73,5 @@ tag back to the last good version.
 
 ## Check
 
-`just check`: shellcheck, then `test/hooks.test.sh`, `test/apply.test.sh` and `test/release.test.sh` on real git and
-podman.
+`just check`: shellcheck, then `test/hooks.test.sh`, `test/apply.test.sh`, `test/release.test.sh` and
+`test/postsubmit.test.sh` on real git and podman.

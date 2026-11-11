@@ -9,6 +9,9 @@
 #                       crate checkout runs; GIT_HOME, where the bare repos live; GITHUB_BASE, the url each repo's
 #                       copy goes to, before /<repo>.git; REPOS, the repos. Safe to run again: it checks out the
 #                       version, inits each repo, and seeds a new one's main from GitHub
+#   crate postsubmit <bare>
+#                       run the repo's postsubmit on main as it stands; post-receive starts it. Green releases main,
+#                       red reverts the commits since the last green main
 set -euo pipefail
 root=$(dirname "$(dirname "$(readlink -f "$0")")")
 
@@ -81,8 +84,20 @@ case "${1:-}" in
     done
     exit "$status"
     ;;
+  postsubmit)
+    # Close what it inherited from the hook: git waits for the push until every copy of its pipes is closed.
+    for fd in /proc/"$$"/fd/*; do
+      fd=${fd##*/}
+      if [ "$fd" -gt 2 ]; then eval "exec $fd>&-"; fi
+    done
+    GIT_DIR=$(cd "${2:?usage: crate postsubmit <bare repo>}" && pwd)
+    export GIT_DIR
+    # shellcheck source=lib/crate.sh
+    . "$root/lib/crate.sh"
+    postsubmit
+    ;;
   *)
-    sed -n '3,11s/^#   //p' "$0" >&2
+    sed -n '3,14s/^#   //p' "$0" >&2
     exit 2
     ;;
 esac

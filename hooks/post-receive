@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
 # crate's post-receive: after main moves, copy it to the remote `github`, then release it: each package whose commits
-# ask a bump gets its next version, as a tag. A failed copy leaves main as it is; the next move copies again.
+# ask a bump gets its next version, as a tag. A repo with postsubmit runs it in the background first, and is released
+# only when it passes. A failed copy leaves main as it is; the next move copies again.
 set -uo pipefail
+root=$(dirname "$(dirname "$(readlink -f "$0")")")
 # shellcheck source=lib/crate.sh
-. "$(dirname "$(readlink -f "$0")")/../lib/crate.sh"
+. "$root/lib/crate.sh"
 
-moved=0
+moved=""
 while read -r _old new ref; do
   if [ "$ref" != refs/heads/main ] || zero "$new"; then continue; fi
-  moved=1
+  moved=$new
   git remote get-url github >/dev/null 2>&1 || continue
   if git push -q github "$new:refs/heads/main" 2>&1; then
     log "mirror $(repo_name) ${new:0:12} pass"
@@ -17,4 +19,13 @@ while read -r _old new ref; do
     echo "crate: the copy to github failed; main has moved, and the next move copies again" >&2
   fi
 done
-[ "$moved" -eq 0 ] || release
+[ -n "$moved" ] || exit 0
+if [ -n "$(postsubmit_of "$moved")" ]; then
+  bare=$(cd "$GIT_DIR" && pwd)
+  mkdir -p "$bare/crate/postsubmit"
+  # Its own session, with no tie to this push, so the pusher does not wait and a closed connection does not stop it.
+  setsid env -u GIT_QUARANTINE_PATH "$root/bin/crate" postsubmit "$bare" </dev/null >>"$bare/crate/postsubmit/run.log" 2>&1 &
+  echo "crate: postsubmit runs ${moved:0:12} in the background; red reverts it on main"
+else
+  release
+fi

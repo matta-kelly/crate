@@ -54,7 +54,7 @@ image_of() {
 # check <old> <new>: main may move from <old> to <new> only when the repo's check passes on <new>, which is the tree
 # main becomes. Holds the repo's lock for the whole check.
 check() {
-  local old=$1 new=$2 bare image status now limit name base=()
+  local old=$1 new=$2 bare status now limit base=()
   bare=$(cd "$GIT_DIR" && pwd)
   work="$bare/crate/work"
   exec 9>"$bare/crate/lock"
@@ -72,27 +72,40 @@ check() {
   log "check $(repo_name) ${new:0:12} start"
   work_git checkout -q -f --detach "$new"
   work_git clean -q -fdx -e node_modules
-  image=$(image_of) || return 1
-  echo "crate: checking ${new:0:12} in $image"
-  zero "$old" || base=(-e "CHECK_BASE=$old")
   limit=$(config_of timeout)
-  limit=${limit:-900}
-  name="crate-$(repo_name)-check"
-  "$engine" rm -f "$name" >/dev/null 2>&1 || true
   status=0
-  timeout -s KILL "$limit" "$engine" run --rm --name "$name" --userns=keep-id:uid=1000,gid=1000 --user 1000:1000 -e HOME=/home/node \
-    --cpus=3 --cpu-shares=256 \
-    -v "$work:$work" -v "$bare:$bare:ro" -v "crate-$(repo_name)-node-modules:$work/node_modules:U" \
-    -e GIT_ALTERNATE_OBJECT_DIRECTORIES="${GIT_QUARANTINE_PATH:-}" \
-    "${base[@]}" \
-    -w "$work" "$image" scripts/check.sh || status=$?
-  if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
-    "$engine" rm -f "$name" >/dev/null 2>&1 || true
-    echo "crate: the check ran past its limit of ${limit}s, and was stopped" >&2
-  fi
+  zero "$old" || base=(-e "CHECK_BASE=$old")
+  in_image check "${limit:-900}" "${base[@]}" -- || status=$?
   # A refused push takes its objects with it: point the checkout back at a commit that stays.
   if [ "$status" -ne 0 ] && ! zero "$old"; then work_git checkout -q -f --detach "$old"; fi
   log "check $(repo_name) ${new:0:12} $([ "$status" -eq 0 ] && echo pass || echo fail)"
+  return "$status"
+}
+
+# in_image <kind> <limit> [<engine args>...] -- [<check.sh args>...]: run the repo's scripts/check.sh in its image, at
+# the checkout $work, as node, with its own packages volume, stopped past <limit> seconds. <kind> names the container
+# and the volume, so the check and postsubmit never share either.
+in_image() {
+  local kind=$1 limit=$2 bare image name status=0 extra=()
+  shift 2
+  while [ "$#" -gt 0 ] && [ "$1" != -- ]; do extra+=("$1"); shift; done
+  [ "$#" -eq 0 ] || shift
+  bare=$(cd "$GIT_DIR" && pwd)
+  image=$(image_of) || return 1
+  if [ "$kind" = check ]; then echo "crate: checking $(work_git rev-parse --short=12 HEAD) in $image"
+  else echo "crate: $kind of $(work_git rev-parse --short=12 HEAD) in $image"; fi
+  name="crate-$(repo_name)-$kind"
+  "$engine" rm -f "$name" >/dev/null 2>&1 || true
+  timeout -s KILL "$limit" "$engine" run --rm --name "$name" --userns=keep-id:uid=1000,gid=1000 --user 1000:1000 -e HOME=/home/node \
+    --cpus=3 --cpu-shares=256 \
+    -v "$work:$work" -v "$bare:$bare:ro" -v "crate-$(repo_name)-$kind-node-modules:$work/node_modules:U" \
+    -e GIT_ALTERNATE_OBJECT_DIRECTORIES="${GIT_QUARANTINE_PATH:-}" \
+    "${extra[@]}" \
+    -w "$work" "$image" scripts/check.sh "$@" || status=$?
+  if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+    "$engine" rm -f "$name" >/dev/null 2>&1 || true
+    echo "crate: the $kind ran past its limit of ${limit}s, and was stopped" >&2
+  fi
   return "$status"
 }
 
@@ -135,7 +148,7 @@ next_version() {
   esac
 }
 
-# release: tag main with each package's next version, and copy the version tags to github. Holds the repo's release
+# release [<commit>]: tag the commit, main when none is given, with each package's next version, and copy the version tags to github. Holds the repo's release
 # lock (not the check's, so a push never waits on another's check), so two moves of main are released in order, from
 # main as it stands.
 release() {
@@ -143,7 +156,8 @@ release() {
   bare=$(cd "$GIT_DIR" && pwd)
   exec 8>"$bare/crate/release.lock"
   flock 8
-  main=$(git rev-parse --verify -q refs/heads/main) || return 0
+  main=${1:-$(git rev-parse --verify -q refs/heads/main)} || return 0
+  [ -n "$main" ] || return 0
   toml=$(git show "$main:crate.toml" 2>/dev/null) || return 0
   ship=$(toml_value ship <<<"$toml")
   [ -n "$ship" ] || return 0
@@ -176,4 +190,90 @@ release() {
       echo "crate: the copy of the version tags to github failed; the next move copies again" >&2
     fi
   done
+}
+
+# Postsubmit: the slow sets, too slow to hold a land, run on each new main after it moves. crate.toml's `postsubmit`
+# names them, as arguments to scripts/check.sh, and `postsubmit_timeout` their limit (3600 seconds when it names none).
+# A repo with postsubmit is released only after it passes, so no version is made from a main it failed.
+#
+# State, beside the check's, in $GIT_DIR/crate:
+#   post/               postsubmit's checkout, kept warm as the check's is
+#   postsubmit/green    the last main that passed
+#   postsubmit/<sha>.log  each run's output, kept
+
+# postsubmit_of <commit>: the sets the commit's crate.toml names for postsubmit; empty for none.
+postsubmit_of() { git show "$1:crate.toml" 2>/dev/null | toml_value postsubmit; }
+
+# postsubmit: the slow sets on main as it stands, one run at a time, so a run that waited tests every land since the
+# last. Green: main is the new green, and is released. Red: the commits since the last green are reverted on main.
+postsubmit() {
+  local bare main green status=0 out limit
+  bare=$(cd "$GIT_DIR" && pwd)
+  work="$bare/crate/post"
+  mkdir -p "$bare/crate/postsubmit"
+  if [ ! -d "$work/.git" ]; then
+    env -u GIT_DIR git init -q "$work"
+    echo "$bare/objects" >"$work/.git/objects/info/alternates"
+  fi
+  exec 7>"$bare/crate/postsubmit.lock"
+  flock 7
+  main=$(git rev-parse --verify -q refs/heads/main) || return 0
+  green=$(cat "$bare/crate/postsubmit/green" 2>/dev/null || true)
+  [ "$main" != "$green" ] || return 0
+  # The tree a green main had passes again: a revert back to it, or a change of nothing.
+  if [ -n "$green" ] && [ "$(git rev-parse "$main^{tree}")" = "$(git rev-parse "$green^{tree}")" ]; then
+    echo "$main" >"$bare/crate/postsubmit/green"
+    log "postsubmit $(repo_name) ${main:0:12} pass: the tree of green ${green:0:12}"
+    return 0
+  fi
+  work_git checkout -q -f --detach "$main"
+  work_git clean -q -fdx -e node_modules
+  limit=$(config_of postsubmit_timeout)
+  out="$bare/crate/postsubmit/${main:0:12}.log"
+  log "postsubmit $(repo_name) ${main:0:12} start"
+  # shellcheck disable=SC2046 # the sets are a list of words
+  in_image postsubmit "${limit:-3600}" -- $(config_of postsubmit) >"$out" 2>&1 || status=$?
+  if [ "$status" -eq 0 ]; then
+    echo "$main" >"$bare/crate/postsubmit/green"
+    log "postsubmit $(repo_name) ${main:0:12} pass"
+    release "$main"
+    return 0
+  fi
+  log "postsubmit $(repo_name) ${main:0:12} fail"
+  if [ -z "$green" ]; then
+    log "postsubmit $(repo_name) ${main:0:12} not reverted: no green main to go back to"
+    return 1
+  fi
+  revert_since "$green" "$main" "$out"
+}
+
+# revert_since <green> <red> <log>: one commit on main that undoes green..red, landed through the check like any push,
+# with the failure's last lines in its message. When main moved meanwhile, it goes again on the new main, three times.
+revert_since() {
+  local green=$1 red=$2 out=$3 bare tries=0 message author
+  bare=$(cd "$GIT_DIR" && pwd)
+  author=$(git log -1 --format='%an <%ae>' "$red")
+  message="revert: $(git rev-list --count "$green..$red") commits, red in postsubmit
+
+Reverts ${green:0:12}..${red:0:12}, which failed postsubmit:
+$(git log --format='- %h %s' "$green..$red")
+
+The failure, its last lines ($out):
+$(tail -n 30 "$out")"
+  while [ "$tries" -lt 3 ]; do
+    tries=$((tries + 1))
+    work_git checkout -q -f --detach "$(git rev-parse refs/heads/main)"
+    if ! work_git -c user.name=crate -c "user.email=crate@$(hostname)" revert --no-commit "$green..$red" >/dev/null ||
+      ! work_git -c user.name=crate -c "user.email=crate@$(hostname)" commit -q --author="$author" -m "$message"; then
+      work_git revert --abort >/dev/null 2>&1 || true
+      log "postsubmit $(repo_name) ${red:0:12} not reverted: the revert does not apply; it needs a hand"
+      return 1
+    fi
+    if work_git push -q "$bare" HEAD:refs/heads/main >>"$out" 2>&1; then
+      log "postsubmit $(repo_name) ${red:0:12} reverted by $(work_git rev-parse --short=12 HEAD)"
+      return 0
+    fi
+  done
+  log "postsubmit $(repo_name) ${red:0:12} not reverted: main kept moving, or the revert's check failed"
+  return 1
 }
