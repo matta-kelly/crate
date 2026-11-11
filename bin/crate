@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # crate: the shared CI every repo runs.
-#   crate init <bare>   make or take a bare repo, and put crate's hooks and rules on it
+#   crate init <bare> [<github url>]
+#                       make or take a bare repo, and put crate's hooks and rules on it. With a GitHub url, main is
+#                       copied there after each move: an ssh url gets the repo's own deploy key, made here once
+#                       (~/.ssh/crate-<repo>), and its public half is printed to add to the GitHub repo
 set -euo pipefail
 root=$(dirname "$(dirname "$(readlink -f "$0")")")
 
@@ -12,6 +15,23 @@ case "${1:-}" in
     git -C "$bare" config receive.denyNonFastForwards true
     git -C "$bare" config receive.denyDeletes true
     mkdir -p "$bare/crate"
+    github=${3:-}
+    if [ -n "$github" ]; then
+      if git -C "$bare" remote get-url github >/dev/null 2>&1; then
+        git -C "$bare" remote set-url github "$github"
+      else
+        git -C "$bare" remote add github "$github"
+      fi
+      case "$github" in
+        git@* | ssh://*)
+          key="$HOME/.ssh/crate-$(basename "$bare" .git)"
+          mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+          [ -f "$key" ] || ssh-keygen -q -t ed25519 -N "" -C "crate $(basename "$bare" .git)" -f "$key"
+          git -C "$bare" config core.sshCommand "ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          echo "crate: the deploy key to add, with write access: $(cat "$key.pub")"
+          ;;
+      esac
+    fi
     if [ ! -d "$bare/crate/work/.git" ]; then
       git init -q "$bare/crate/work"
       echo "$(cd "$bare" && pwd)/objects" >"$bare/crate/work/.git/objects/info/alternates"
@@ -19,7 +39,7 @@ case "${1:-}" in
     echo "crate: $bare checks every push to main"
     ;;
   *)
-    sed -n 's/^#   //p' "$0" >&2
+    sed -n '3,6s/^#   //p' "$0" >&2
     exit 2
     ;;
 esac

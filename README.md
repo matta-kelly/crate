@@ -7,7 +7,7 @@ only to a commit whose check passed on the exact tree main becomes. A land is a 
   `CHECK_BASE` set to the old main. Red refuses the push and sends the check's output to the pusher. One check at a time
   per repo (the merge queue); a push that waited while main moved is told to pull with rebase and push again
 - `hooks/post-receive`: after main moves, push it to the remote `github`, the public copy
-- `bin/crate init <bare>`: make or take a bare repo, and put the hooks and rules on it (fast-forward only, no deletion)
+- `bin/crate init <bare> [<github url>]`: make or take a bare repo, and put the hooks and rules on it (fast-forward only, no deletion). With an ssh GitHub url, it makes the repo's own deploy key on this machine and prints its public half
 - `lib/crate.sh`: what the hooks share
 
 ## A repo on crate

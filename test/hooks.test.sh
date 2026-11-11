@@ -23,9 +23,8 @@ not_ok() {
 # A fresh bare repo with crate on it, a second bare repo standing in for GitHub, and a client clone.
 setup() {
   rm -rf "${tmp:?}"/*
-  "$root/bin/crate" init "$tmp/repo.git" >/dev/null
   git init -q --bare -b main "$tmp/github.git"
-  git -C "$tmp/repo.git" remote add github "$tmp/github.git"
+  "$root/bin/crate" init "$tmp/repo.git" "$tmp/github.git" >/dev/null
   git init -q -b main "$tmp/client"
   cd "$tmp/client" || exit 1
   git config user.email t@t && git config user.name t
