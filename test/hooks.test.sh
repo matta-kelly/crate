@@ -5,6 +5,7 @@ set -uo pipefail
 root=$(dirname "$(dirname "$(readlink -f "$0")")")
 alpine=docker.io/library/alpine@sha256:0f49f331d9212aff11b932863be4eb01cdf962969aa86dab7d1ee21ac6f5f52b
 tmp=$(mktemp -d)
+export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 trap 'rm -rf "$tmp"; ${CRATE_ENGINE:-podman} volume rm -f crate-repo-node-modules >/dev/null 2>&1' EXIT
 failed=0
 n=0
