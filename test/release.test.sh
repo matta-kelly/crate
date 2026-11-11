@@ -36,8 +36,9 @@ setup() {
   touch it/a
   git add -A && git commit -qm "chore: start"
   shift
-  for tag in "$@"; do git tag "$tag"; done
-  git push -q "$tmp/repo.git" main --tags 2>/dev/null
+  git push -q "$tmp/repo.git" main 2>/dev/null
+  # A first version is tagged by hand on the server: crate refuses a version tag pushed by a client.
+  for tag in "$@"; do git -C "$tmp/repo.git" tag "$tag" main; done
 }
 
 # land <file> <message>: commit a change to the file, and push it to main.

@@ -144,5 +144,104 @@ if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "checki
   ok "image dev: the check runs in the image the repo's dev-image.sh names"
 else not_ok "image dev: the check runs in the image the repo's dev-image.sh names" "$out"; fi
 
+# a failed checkout: the check's checkout cannot take the pushed commit (a stale index.lock makes the real
+# `git checkout` fail), though the tree it still holds would pass. The push is refused with crate's reason, the check
+# does not run on that stale tree, and main has not moved
+setup
+git push -q "$tmp/repo.git" main 2>/dev/null
+lock="$tmp/repo.git/crate/work/.git/index.lock"
+before=$(main_of "$tmp/repo.git")
+echo more >extra && git add extra && git commit -qm two
+touch "$lock"
+out=$(git push "$tmp/repo.git" main 2>&1)
+rc=$?
+reason=$(grep 'crate: ' <<<"$out" | grep -v 'crate: checking')
+if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = "$before" ] && ! grep -q "check passed" <<<"$out" && [ -n "$reason" ]; then
+  ok "a failed checkout: the push is refused with crate's reason, the check does not run, main has not moved"
+else not_ok "a failed checkout: the push is refused with crate's reason, the check does not run, main has not moved" "rc=$rc
+$out"; fi
+
+# a second commit on top, the checkout still failing: refused again, main still at the old commit
+echo more2 >extra2 && git add extra2 && git commit -qm three
+out=$(git push "$tmp/repo.git" main 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = "$before" ] && ! grep -q "check passed" <<<"$out"; then
+  ok "a failed checkout: a second push is refused too, main has not moved"
+else not_ok "a failed checkout: a second push is refused too, main has not moved" "rc=$rc
+$out"; fi
+
+# the checkout recovers: with the lock gone, the same commits land, checked against the old main
+rm -f "$lock"
+out=$(git push "$tmp/repo.git" main 2>&1)
+if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "check passed" <<<"$out" &&
+  grep -q "base=$before" <<<"$out"; then
+  ok "a failed checkout: once the checkout works, the push lands"
+else not_ok "a failed checkout: once the checkout works, the push lands" "$out"; fi
+
+tags_of() { git -C "$1" tag | tr '\n' ' '; }
+
+# version tags: a repo with ship set refuses a pushed tag in the shape of a package's version, and nothing reaches github
+setup
+printf 'crate = "1"\nimage = "%s"\nship = "npm"\npackages = ". it"\n' "$alpine" >crate.toml
+mkdir it && touch it/a
+git add -A && git commit -qm "chore: ship"
+git push -q "$tmp/repo.git" main 2>/dev/null
+for t in v1.2.3 v0.0.1 v10.20.30 it-v0.3.0; do
+  git tag "$t"
+  out=$(git push "$tmp/repo.git" "$t" 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ] && grep -q "crate: " <<<"$out"; then
+    ok "a version tag $t is refused, and is on neither server"
+  else not_ok "a version tag $t is refused, and is on neither server" "rc=$rc
+repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
+$out"; fi
+done
+
+# an annotated version tag is a tag all the same
+git tag -a v2.0.0 -m "two"
+out=$(git push "$tmp/repo.git" v2.0.0 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && grep -q "crate: " <<<"$out"; then
+  ok "an annotated version tag is refused"
+else not_ok "an annotated version tag is refused" "rc=$rc
+$out"; fi
+
+# a version tag pushed with main refuses the whole push: main has not moved
+before=$(main_of "$tmp/repo.git")
+echo more >extra && git add extra && git commit -qm "chore: extra"
+git tag v3.0.0
+out=$(git push "$tmp/repo.git" main v3.0.0 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = "$before" ] && [ -z "$(tags_of "$tmp/repo.git")" ]; then
+  ok "a version tag pushed with main refuses the whole push"
+else not_ok "a version tag pushed with main refuses the whole push" "rc=$rc
+$out"; fi
+
+# a tag of any other name is not touched
+for t in nightly rc-2 release-1.0.0; do
+  git tag "$t"
+  out=$(git push "$tmp/repo.git" "$t" 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ] && git -C "$tmp/repo.git" rev-parse -q --verify "refs/tags/$t" >/dev/null; then
+    ok "a tag named $t is not a version, and is kept"
+  else not_ok "a tag named $t is not a version, and is kept" "rc=$rc
+$out"; fi
+done
+
+# crate's own tags, made in the bare repo by release, are not touched: the version follows a land, and goes to github
+setup
+printf 'crate = "1"\nimage = "%s"\nship = "npm"\n' "$alpine" >crate.toml
+git add -A && git commit -qm "chore: ship"
+git push -q "$tmp/repo.git" main 2>/dev/null
+git -C "$tmp/repo.git" tag v0.1.0 main
+echo x >>verdict.note && git add verdict.note && git commit -qm "feat: one"
+out=$(git push "$tmp/repo.git" main 2>&1)
+rc=$?
+if [ "$rc" -eq 0 ] && [ "$(tags_of "$tmp/repo.git")" = "v0.1.0 v0.1.1 " ] && [ "$(tags_of "$tmp/github.git")" = "v0.1.0 v0.1.1 " ]; then
+  ok "crate's own version tags are made and copied as before"
+else not_ok "crate's own version tags are made and copied as before" "rc=$rc
+repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
+$out"; fi
+
 echo "1..$n"
 exit "$failed"
