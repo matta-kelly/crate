@@ -40,8 +40,9 @@ CHECK
   chmod +x scripts/check.sh
   echo pass >slow
   git add -A && git commit -qm "chore: start"
-  git tag v0.1.0
-  git push -q "$tmp/repo.git" main --tags 2>/dev/null
+  git push -q "$tmp/repo.git" main 2>/dev/null
+  # A first version is tagged by hand on the server: crate refuses a version tag pushed by a client.
+  git -C "$tmp/repo.git" tag v0.1.0 main
   settle
 }
 
