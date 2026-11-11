@@ -164,7 +164,7 @@ release() {
     [ -n "$bump" ] || continue
     version="$prefix$(next_version "${last#"$prefix"}" "$bump")"
     git tag "$version" "$main"
-    echo "crate: $pkg is $version ($bump)"
+    echo "crate: $pkg is $version, after $last"
     log "release $(repo_name) $version ${main:0:12}"
   done
   # Every version tag, so one a failed copy left behind goes with the next.
