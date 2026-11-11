@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# crate's post-receive: after main moves, copy it to the remote `github`. A failed copy leaves main as it is; the next
+# move copies again.
+set -uo pipefail
+# shellcheck source=lib/crate.sh
+. "$(dirname "$(readlink -f "$0")")/../lib/crate.sh"
+
+while read -r _old new ref; do
+  if [ "$ref" != refs/heads/main ] || zero "$new"; then continue; fi
+  git remote get-url github >/dev/null 2>&1 || continue
+  if git push -q github "$new:refs/heads/main" 2>&1; then
+    log "mirror $(repo_name) ${new:0:12} pass"
+  else
+    log "mirror $(repo_name) ${new:0:12} fail"
+    echo "crate: the copy to github failed; main has moved, and the next move copies again" >&2
+  fi
+done

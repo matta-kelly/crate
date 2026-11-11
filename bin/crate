@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# crate: the shared CI every repo runs.
+#   crate init <bare>   make or take a bare repo, and put crate's hooks and rules on it
+set -euo pipefail
+root=$(dirname "$(dirname "$(readlink -f "$0")")")
+
+case "${1:-}" in
+  init)
+    bare=${2:?usage: crate init <bare repo>}
+    [ -d "$bare" ] || git init -q --bare -b main "$bare"
+    git -C "$bare" config core.hooksPath "$root/hooks"
+    git -C "$bare" config receive.denyNonFastForwards true
+    git -C "$bare" config receive.denyDeletes true
+    mkdir -p "$bare/crate"
+    if [ ! -d "$bare/crate/work/.git" ]; then
+      git init -q "$bare/crate/work"
+      echo "$(cd "$bare" && pwd)/objects" >"$bare/crate/work/.git/objects/info/alternates"
+    fi
+    echo "crate: $bare checks every push to main"
+    ;;
+  *)
+    sed -n 's/^#   //p' "$0" >&2
+    exit 2
+    ;;
+esac
