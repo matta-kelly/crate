@@ -26,10 +26,13 @@ work_git() {
     GIT_ALTERNATE_OBJECT_DIRECTORIES="${GIT_QUARANTINE_PATH:-}" git -C "$work" "$@"
 }
 
-# config_of <key>: a value from crate.toml at the checkout, as `key = "value"`. Empty when it is not there.
+# toml_value <key>: a value from the crate.toml on stdin, as `key = "value"`. Empty when it is not there.
+toml_value() { sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" | head -1; }
+
+# config_of <key>: a value from crate.toml at the checkout.
 config_of() {
   [ -f "$work/crate.toml" ] || return 0
-  sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$work/crate.toml" | head -1
+  toml_value "$1" <"$work/crate.toml"
 }
 
 # The check's time limit is crate.toml's `timeout`, in seconds, 900 when it names none. A check past it is stopped, the
@@ -91,4 +94,86 @@ check() {
   if [ "$status" -ne 0 ] && ! zero "$old"; then work_git checkout -q -f --detach "$old"; fi
   log "check $(repo_name) ${new:0:12} $([ "$status" -eq 0 ] && echo pass || echo fail)"
   return "$status"
+}
+
+# Release: every move of main that a package's commits ask a bump for is a version of that package, read from the
+# commit types (Conventional Commits 1.0) as semver (SemVer 2.0). The tag is the truth, never committed back.
+#
+# crate.toml's `ship` names how a version ships (npm); a repo that names none has no versions. `packages` names the
+# package folders, "." when it names none. The package at "." is tagged v<version>; one in a folder, <folder>-v<version>.
+# A package's commits are the ones that touch its folder, and, for ".", touch no other package's folder.
+
+# bump_of <range> <pathspec>...: the bump the commits ask for. The strongest one wins: major for a breaking change (a
+# `!` after the type, or a `BREAKING CHANGE:` footer), minor for feat, patch for fix or perf, none for any other type.
+bump_of() {
+  local range=$1
+  shift
+  if git log --format=%s "$range" -- "$@" | grep -qE '^[a-z]+(\([^)]*\))?!:' ||
+    git log --format=%b "$range" -- "$@" | grep -qE '^BREAKING[ -]CHANGE:'; then
+    echo major
+  elif git log --format=%s "$range" -- "$@" | grep -qE '^feat(\([^)]*\))?:'; then
+    echo minor
+  elif git log --format=%s "$range" -- "$@" | grep -qE '^(fix|perf)(\([^)]*\))?:'; then
+    echo patch
+  fi
+}
+
+# next_version <major.minor.patch> <bump>: the version after it. Before 1.0.0, each bump moves down one place, as npm's
+# caret reads a 0.x version (^0.3.1 takes 0.3.x, never 0.4.0): a breaking change bumps minor, and feat bumps patch
+# (release-please's bump-minor-pre-major and bump-patch-for-minor-pre-major). A package leaves 0.x only by a v1.0.0
+# tag made by hand.
+next_version() {
+  local major minor patch bump=$2
+  IFS=. read -r major minor patch <<<"$1"
+  if [ "$major" -eq 0 ]; then
+    case "$bump" in major) bump="minor" ;; minor) bump="patch" ;; esac
+  fi
+  case "$bump" in
+    major) echo "$((major + 1)).0.0" ;;
+    minor) echo "$major.$((minor + 1)).0" ;;
+    patch) echo "$major.$minor.$((patch + 1))" ;;
+  esac
+}
+
+# release: tag main with each package's next version, and copy the version tags to github. Holds the repo's release
+# lock (not the check's, so a push never waits on another's check), so two moves of main are released in order, from
+# main as it stands.
+release() {
+  local bare main toml ship packages pkg other prefix last bump version paths
+  bare=$(cd "$GIT_DIR" && pwd)
+  exec 8>"$bare/crate/release.lock"
+  flock 8
+  main=$(git rev-parse --verify -q refs/heads/main) || return 0
+  toml=$(git show "$main:crate.toml" 2>/dev/null) || return 0
+  ship=$(toml_value ship <<<"$toml")
+  [ -n "$ship" ] || return 0
+  packages=$(toml_value packages <<<"$toml")
+  packages=${packages:-.}
+  for pkg in $packages; do
+    if [ "$pkg" = . ]; then prefix=v; else prefix="$pkg-v"; fi
+    paths=("$pkg")
+    if [ "$pkg" = . ]; then
+      for other in $packages; do [ "$other" = . ] || paths+=(":(exclude)$other"); done
+    fi
+    if ! last=$(git describe --tags --abbrev=0 --match "${prefix}[0-9]*" "$main" 2>/dev/null); then
+      echo "crate: $pkg has no ${prefix}<version> tag to count from; tag its first version by hand" >&2
+      log "release $(repo_name) $pkg none: no tag to count from"
+      continue
+    fi
+    bump=$(bump_of "$last..$main" "${paths[@]}")
+    [ -n "$bump" ] || continue
+    version="$prefix$(next_version "${last#"$prefix"}" "$bump")"
+    git tag "$version" "$main"
+    echo "crate: $pkg is $version ($bump)"
+    log "release $(repo_name) $version ${main:0:12}"
+  done
+  # Every version tag, so one a failed copy left behind goes with the next.
+  git remote get-url github >/dev/null 2>&1 || return 0
+  for pkg in $packages; do
+    if [ "$pkg" = . ]; then prefix=v; else prefix="$pkg-v"; fi
+    if ! git push -q github "refs/tags/$prefix*:refs/tags/$prefix*" 2>&1; then
+      log "release $(repo_name) $prefix copy fail"
+      echo "crate: the copy of the version tags to github failed; the next move copies again" >&2
+    fi
+  done
 }

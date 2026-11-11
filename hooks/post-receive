@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# crate's post-receive: after main moves, copy it to the remote `github`. A failed copy leaves main as it is; the next
-# move copies again.
+# crate's post-receive: after main moves, copy it to the remote `github`, then release it: each package whose commits
+# ask a bump gets its next version, as a tag. A failed copy leaves main as it is; the next move copies again.
 set -uo pipefail
 # shellcheck source=lib/crate.sh
 . "$(dirname "$(readlink -f "$0")")/../lib/crate.sh"
 
+moved=0
 while read -r _old new ref; do
   if [ "$ref" != refs/heads/main ] || zero "$new"; then continue; fi
+  moved=1
   git remote get-url github >/dev/null 2>&1 || continue
   if git push -q github "$new:refs/heads/main" 2>&1; then
     log "mirror $(repo_name) ${new:0:12} pass"
@@ -15,3 +17,4 @@ while read -r _old new ref; do
     echo "crate: the copy to github failed; main has moved, and the next move copies again" >&2
   fi
 done
+[ "$moved" -eq 0 ] || release
