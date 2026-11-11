@@ -255,5 +255,88 @@ else not_ok "crate's own version tags are made and copied as before" "rc=$rc
 repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
 $out"; fi
 
+# The rule is one for every repo: the hook reads no setting of the repo, so a repo that ships nothing refuses a version
+# tag as well. The refusal says only crate makes them, and gives the command that sets a first version in the bare repo.
+tagcmd='git( -C [^ ]+)? tag [^ ]+'
+
+setup
+git push -q "$tmp/repo.git" main 2>/dev/null
+for t in v1.2.3 v0.0.1 it-v0.3.0 my-app-v1.0.0 v2; do
+  git tag "$t"
+  out=$(git push "$tmp/repo.git" "$t" 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then
+    ok "a repo that ships nothing refuses the version tag $t, and it is on neither server"
+  else not_ok "a repo that ships nothing refuses the version tag $t, and it is on neither server" "rc=$rc
+repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
+$out"; fi
+done
+
+# the refusal's words: only crate makes version tags, and the command for a first version, on crate's lines
+git tag v4.0.0
+out=$(git push "$tmp/repo.git" v4.0.0 2>&1)
+reasons=$(grep 'crate: ' <<<"$out")
+if grep -qi 'only crate makes' <<<"$reasons" && grep -Eq "$tagcmd" <<<"$reasons"; then
+  ok "the refusal says only crate makes version tags, and gives the command that sets a first version"
+else not_ok "the refusal says only crate makes version tags, and gives the command that sets a first version" "$out"; fi
+
+# the same rule on the first push to a repo: there is no main yet to read a setting from, and the tag is still refused,
+# alone and with main; main has not moved
+setup
+git tag v1.0.0
+out=$(git push "$tmp/repo.git" v1.0.0 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then
+  ok "a version tag pushed to a repo with no main is refused"
+else not_ok "a version tag pushed to a repo with no main is refused" "rc=$rc
+$out"; fi
+out=$(git push "$tmp/repo.git" main v1.0.0 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = none ] && [ "$(main_of "$tmp/github.git")" = none ] &&
+  [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ]; then
+  ok "the first push of main with a version tag is refused whole: main has not moved"
+else not_ok "the first push of main with a version tag is refused whole: main has not moved" "rc=$rc
+$out"; fi
+git tag it-v0.1.0
+out=$(git push "$tmp/repo.git" main it-v0.1.0 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = none ] && [ -z "$(tags_of "$tmp/repo.git")" ]; then
+  ok "the first push of main with a folder version tag is refused whole"
+else not_ok "the first push of main with a folder version tag is refused whole" "rc=$rc
+$out"; fi
+if git push -q "$tmp/repo.git" main 2>/dev/null && [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ]; then
+  ok "the first push of main alone still lands after a refused tag"
+else not_ok "the first push of main alone still lands after a refused tag"; fi
+
+# the push that turns ship on: the old main names no ship, and the tag is refused all the same
+setup
+git push -q "$tmp/repo.git" main 2>/dev/null
+before=$(main_of "$tmp/repo.git")
+printf 'crate = "1"\nimage = "%s"\nship = "npm"\n' "$alpine" >crate.toml
+git add -A && git commit -qm "chore: ship"
+git tag v1.0.0
+out=$(git push "$tmp/repo.git" main v1.0.0 2>&1)
+rc=$?
+if [ "$rc" -ne 0 ] && [ "$(main_of "$tmp/repo.git")" = "$before" ] && [ -z "$(tags_of "$tmp/repo.git")" ] &&
+  [ -z "$(tags_of "$tmp/github.git")" ]; then
+  ok "the push that turns ship on refuses a version tag pushed with it, and main has not moved"
+else not_ok "the push that turns ship on refuses a version tag pushed with it, and main has not moved" "rc=$rc
+$out"; fi
+
+# a tag of any other name is kept in a repo that ships nothing, too
+for t in nightly v-1 version1 it-vnext rc-2; do
+  git tag "$t"
+  out=$(git push "$tmp/repo.git" "$t" 2>&1)
+  rc=$?
+  if [ "$rc" -eq 0 ] && git -C "$tmp/repo.git" rev-parse -q --verify "refs/tags/$t" >/dev/null; then
+    ok "a repo that ships nothing keeps the tag $t, which is no version"
+  else not_ok "a repo that ships nothing keeps the tag $t, which is no version" "rc=$rc
+$out"; fi
+done
+
+# the README says the rule, and how a first version is set
+if grep -Eq 'git( -C [^ ]+)? tag ' "$root/README.md"; then ok "the README gives the command that sets a first version"
+else not_ok "the README gives the command that sets a first version"; fi
+
 echo "1..$n"
 exit "$failed"
