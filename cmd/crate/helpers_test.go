@@ -10,6 +10,7 @@ package main_test
 //   FAIL=<podman subcommand>   that subcommand prints "podman <it> exploded" on stderr and exits 125
 //   HANG=<subcommand|smoke>    that call never answers (podman <sub>, skopeo <sub>, or the smoke)
 //   SKOPEO_ERR=<text>          skopeo inspect fails with this text, not "manifest unknown"
+//   EXISTS_EXIT=<n>            podman image exists exits n
 //   REMOTE_GUARD=1             podman fails any call that names a store path or a cgroup
 
 import (
@@ -84,7 +85,10 @@ pull)
   ;;
 image)
   case $2 in
-  exists) grep -qxF -- "$3" "$T/local" ;;
+  exists)
+    [ -z "${EXISTS_EXIT:-}" ] || exit "$EXISTS_EXIT"
+    grep -qxF -- "$3" "$T/local"
+    ;;
   rm)
     grep -vxF -- "$3" "$T/local" >"$T/local.new"
     mv "$T/local.new" "$T/local"
@@ -277,7 +281,7 @@ func (f *fx) run(cwd string, env []string, args ...string) result {
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 	}
 	cmd.Env = append(filterEnv(os.Environ(), "PATH", "CRATE_MACHINE", "CONTAINER_HOST", "FAIL", "HANG", "SKOPEO_ERR",
-		"REMOTE_GUARD", "SMOKE_EXIT", "CRATE_LIMIT_SCALE", "ENGINE", "DEV_IMAGE", "DEV_IMAGE_SMOKE"), base...)
+		"REMOTE_GUARD", "EXISTS_EXIT", "SMOKE_EXIT", "CRATE_LIMIT_SCALE", "ENGINE", "DEV_IMAGE", "DEV_IMAGE_SMOKE"), base...)
 	cmd.Env = append(cmd.Env, env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

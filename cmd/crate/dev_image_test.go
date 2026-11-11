@@ -439,6 +439,68 @@ func TestARegistryThatFailsIsNotAMissingTag(t *testing.T) {
 	}
 }
 
+// ghcr answers "denied" for a package that does not exist yet, and "name unknown" for an image with no package:
+// for ensure each is a missing tag, so a new repo's first image is made.
+func TestEnsureBuildsAndPushesWhenGhcrAnswersDeniedOrNameUnknown(t *testing.T) {
+	for _, msg := range []string{"denied: requested access to the resource is denied", "name unknown: repository name not known to registry"} {
+		t.Run(msg, func(t *testing.T) {
+			f := newFx(t, "que-pasa")
+			r := f.dev([]string{"SKOPEO_ERR=" + msg}, "ensure")
+			tag := image + ":" + goldenHash
+			if r.code != 0 || !strings.HasPrefix(r.out, image+"@sha256:") || len(lines(r.out)) != 1 {
+				t.Errorf("expected exit 0 and one line, the ref, got %s", r)
+			}
+			for _, want := range []string{"podman build", "podman push " + tag} {
+				if !strings.Contains(f.calls(), want) {
+					t.Errorf("the calls: expected %q, got\n%s", want, f.calls())
+				}
+			}
+		})
+	}
+}
+
+func TestDeniedIsAFailureForRefAndPromoteAndNameUnknownIsAMissingTag(t *testing.T) {
+	const denied = "denied: requested access to the resource is denied"
+	const unknown = "name unknown: repository name not known to registry"
+	for _, verb := range []string{"ref", "promote"} {
+		t.Run("denied "+verb, func(t *testing.T) {
+			f := newFx(t, "que-pasa")
+			r := f.dev([]string{"SKOPEO_ERR=" + denied}, verb)
+			if r.code != 1 || !strings.Contains(r.err, denied) || !strings.Contains(r.err, goldenHash) || strings.Contains(r.err, "neither") || r.out != "" {
+				t.Errorf("expected exit 1 and a failure that names the tag and skopeo's message, got %s", r)
+			}
+		})
+	}
+	t.Run("name unknown ref", func(t *testing.T) {
+		f := newFx(t, "que-pasa")
+		r := f.dev([]string{"SKOPEO_ERR=" + unknown}, "ref")
+		if r.code != 1 || !strings.Contains(r.err, "neither") {
+			t.Errorf("expected exit 1 and `neither ... exists`, got %s", r)
+		}
+	})
+	t.Run("name unknown promote", func(t *testing.T) {
+		f := newFx(t, "que-pasa")
+		r := f.dev([]string{"SKOPEO_ERR=" + unknown}, "promote")
+		if r.code != 1 || !strings.Contains(r.err, "ensure") || !strings.Contains(r.err, image+":"+goldenHash) {
+			t.Errorf("expected exit 1 and the missing tag with `run ensure first`, got %s", r)
+		}
+	})
+}
+
+func TestAStoreThatAnswersNeitherYesNorNoIsAFailure(t *testing.T) {
+	f := newFx(t, "que-pasa")
+	f.inRegistry(image+":"+goldenHash, 4)
+	r := f.dev([]string{"EXISTS_EXIT=125"}, "local")
+	if r.code != 1 || !strings.Contains(r.err, "125") || !hasReasonLine(r.err) || r.out != "" {
+		t.Errorf("expected exit 1 and a `crate:` line that names the exit 125, got %s", r)
+	}
+	for _, not := range []string{"podman pull", "podman build"} {
+		if strings.Contains(f.calls(), not) {
+			t.Errorf("the calls: expected no %q, got\n%s", not, f.calls())
+		}
+	}
+}
+
 func TestALocalPullThatFailsGoesOnToABuild(t *testing.T) {
 	f := newFx(t, "que-pasa")
 	tag := image + ":" + goldenHash
@@ -518,6 +580,7 @@ func TestACallPastItsLimitStopsAndSaysWhatItWaitedFor(t *testing.T) {
 		{"podman push", 900, "push", "ensure", "podman push", false},
 		{"podman build", 1800, "build", "local", "podman build", false},
 		{"the smoke", 600, "smoke", "local", "smoke", false},
+		{"podman image exists", 30, "image", "local", "image exists", false},
 	}
 	timeLike := regexp.MustCompile(`\d+(\.\d+)?\s?(ms|s|m|min)\b`)
 	for _, row := range rows {
@@ -845,6 +908,16 @@ func TestAMachineWithNoFileSaysOnceThatItHasNoCeiling(t *testing.T) {
 	}
 	if hash := f.dev(nil, "hash"); strings.Contains(hash.err, "no ceiling") {
 		t.Errorf("hash starts no container: expected no word of a ceiling, got %q", hash.err)
+	}
+}
+
+func TestAMachineWithAFileNeverSaysItHasNoCeiling(t *testing.T) {
+	f := newFx(t, "que-pasa")
+	file := filepath.Join(f.dir, "machine.toml")
+	must(t, os.WriteFile(file, []byte("cpus = \"2-15\"\nmemory = \"24G\"\n\n[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"), 0o644))
+	r := f.dev([]string{"CRATE_MACHINE=" + file}, "local")
+	if r.code != 0 || strings.Contains(r.err, "no ceiling") {
+		t.Errorf("local that builds, with a machine file: expected exit 0 and no word of a ceiling, got %s", r)
 	}
 }
 
