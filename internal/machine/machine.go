@@ -1,5 +1,8 @@
-// Package machine is the seam between crate and the machine it runs on. A stub: da-hammer builds it.
+// Package machine is the seam between crate and the machine it runs on: what a system may take of it, and
+// the file that says what the machine has. Here the default machine places nothing and holds nothing.
 package machine
+
+import "fmt"
 
 // The four kinds of a claim on the machine.
 const (
@@ -9,42 +12,53 @@ const (
 	Attempt    = "attempt"
 )
 
+// The names crate itself uses for a system. A workspace's name is <name>-<folder>, so a name with no "-"
+// never clashes with one.
+const (
+	Router = "router"
+	Build  = "build"
+)
+
+// CheckKind refuses a kind outside the four.
+func CheckKind(kind string) error {
+	switch kind {
+	case Work, Check, Postsubmit, Attempt:
+		return nil
+	}
+	return fmt.Errorf("machine: kind %q is not one of work, check, postsubmit, attempt", kind)
+}
+
 // Placement is a slice name, or "" for none.
 type Placement string
 
-// Slot is a system's claim on the machine.
+// Slot is a system's claim on the machine. Bind says its network exists; Release frees it.
 type Slot interface {
 	Bind()
 	Release()
 }
 
-// Machine is what a caller takes as a value.
+// Machine is what a caller takes as a value. Hold waits for a slot of the kind; Place never waits and takes
+// no slot.
 type Machine interface {
 	Hold(kind, system string) (Slot, error)
 	Place(kind, system string) (Placement, error)
 }
 
-type stub struct{}
+type noCeiling struct{}
 
-func (stub) Hold(kind, system string) (Slot, error)       { return nil, nil }
-func (stub) Place(kind, system string) (Placement, error) { return "", nil }
+func (noCeiling) Hold(kind, system string) (Slot, error) {
+	if err := CheckKind(kind); err != nil {
+		return nil, err
+	}
+	return noSlot{}, nil
+}
+
+func (noCeiling) Place(kind, system string) (Placement, error) { return "", CheckKind(kind) }
+
+type noSlot struct{}
+
+func (noSlot) Bind()    {}
+func (noSlot) Release() {}
 
 // Default is the machine of this user and machine file.
-func Default() Machine { return stub{} }
-
-// Count is the [count] table of the machine file.
-type Count struct {
-	Check      int
-	Postsubmit int
-	Attempt    int
-}
-
-// Config is the machine file.
-type Config struct {
-	CPUs   string
-	Memory string
-	Count  Count
-}
-
-// Read reads the machine file at path. A path with no file gives nil and no error.
-func Read(path string) (*Config, error) { return nil, nil }
+func Default() Machine { return noCeiling{} }

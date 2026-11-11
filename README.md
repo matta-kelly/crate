@@ -74,7 +74,48 @@ crate stays outside the gate it ships, so a broken hook never blocks its own fix
 and moves the major tag (`v1`) to it. A server runs crate at the major tag. A bad release is undone by moving the major
 tag back to the last good version.
 
+## Install
+
+crate (the Go binary) is one asset on a public GitHub release: `crate-linux-amd64.tar.gz`, at
+`https://github.com/matta-kelly/crate/releases/download/v<version>/crate-linux-amd64.tar.gz`, and the same at the major
+tag `v<major>`. It needs no token. Unpack it with no strip: `bin/crate` (a static binary), `VERSION` and `COMMIT` are
+at the root. `crate --version` prints both.
+
+- `just release <major.minor.patch>`: from a clean main equal to GitHub's, the check, the tag `v<version>`, the major
+  tag moved, then the asset on the release `v<version>` and, replacing it, on the release `v<major>`. Run again after a
+  failure, it goes on from the step that failed. `--dry-run` only builds `dist/crate-linux-amd64.tar.gz`
+- `just rollback <major.minor.patch>`: the major tag and its asset back to that version. It refuses a version whose asset
+  lacks `hooks/` when the major's asset has it
+
+`bin/crate` in the repo stays the shell until the server moves to the binary. The built binary goes to `dist/`.
+
+## crate dev-image
+
+`crate [-C <path>] dev-image <hash|ref|ensure|promote|local> [--name <name>] [--rev <commit>]`: a repo's dev image in
+ghcr, one per hash of its inputs. Each verb prints one line on stdout. Everything else goes to stderr, each reason in a
+line that starts `crate:`. Exit 2 is a usage error, 1 a failure.
+
+- `hash`: the first 16 hex of the sha256 of `git ls-tree -r <commit> -- <inputs>`
+- `ref`: `<image>@<digest>` of `<image>:<hash>`, else of `<image>:main`
+- `ensure`: build, smoke and push `<image>:<hash>` only when the registry lacks it, then print its ref
+- `promote`: point `<image>:main` at `<image>:<hash>`
+- `local`: put `<image>:<hash>` in this machine's store (its copy, else a pull, else a build and a smoke), then print the tag
+- the image name, the first that is there: `[dev] image`; `name` in `crate.toml`; `--name`; the repo's folder (for a
+  worktree, the folder of the checkout it comes from; for a bare repo, its folder without `.git`). All but the first
+  are `ghcr.io/matta-kelly/<name>-dev`
+- `[dev]` in `crate.toml`: `inputs` (the paths the hash covers), `containerfile` (the path `podman build -f` reads, one
+  of `inputs`), `smoke` (a script run with the image as its one argument), `image`. Defaults: the three inputs of the
+  template, `.devcontainer/Containerfile`, `scripts/dev-image-smoke.sh`
+- `--rev <commit>`: `hash` and `ref` read the commit's tree, from any git folder that holds it, a bare one too. The other
+  three build from a checkout and refuse it
+- the engine: `podman` and `skopeo` from the PATH, with the registry login they read. `CONTAINER_HOST` may name a remote
+  engine. The smoke mounts the checkout, so the checkout's path must be the same on the engine's host
+- the machine: `/etc/crate/machine.toml` (`CRATE_MACHINE` names another) gives a ceiling. With none, a build says once
+  on stderr that the machine has no ceiling
+- limits: every call has one, in `internal/limit`. `CRATE_LIMIT_SCALE` (a whole number of 1 or more) divides them all,
+  for tests
+
 ## Check
 
-`just check`: shellcheck, then `test/hooks.test.sh`, `test/apply.test.sh`, `test/release.test.sh` and
+`just check`: `go vet`, `go test ./...`, shellcheck on the shell that is left, then `test/hooks.test.sh`, `test/apply.test.sh`, `test/release.test.sh` and
 `test/postsubmit.test.sh` on real git and podman.
