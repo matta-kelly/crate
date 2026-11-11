@@ -5,7 +5,9 @@ only to a commit whose check passed on the exact tree main becomes. A land is a 
 
 - `hooks/pre-receive`: a push to main runs the repo's `scripts/check.sh` in its image, on the pushed commit, with
   `CHECK_BASE` set to the old main. Red refuses the push and sends the check's output to the pusher. One check at a time
-  per repo (the merge queue); a push that waited while main moved is told to pull with rebase and push again
+  per repo (the merge queue); a push that waited while main moved is told to pull with rebase and push again. A push
+  whose commit the check's checkout cannot check out is refused, as is any push of a version tag (`v<semver>`,
+  `<folder>-v<semver>`): only crate makes those
 - `hooks/post-receive`: after main moves, push it to the remote `github`, the public copy, then release it
   ([Release](#release)). A repo with postsubmit runs it in the background first, and is released only when it passes
   ([Postsubmit](#postsubmit))

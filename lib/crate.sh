@@ -70,7 +70,11 @@ check() {
     return 1
   fi
   log "check $(repo_name) ${new:0:12} start"
-  work_git checkout -q -f --detach "$new"
+  if ! work_git checkout -q -f --detach "$new"; then
+    echo "crate: could not check out ${new:0:12}, so its tree is not checked. Push again" >&2
+    log "check $(repo_name) ${new:0:12} fail: checkout"
+    return 1
+  fi
   work_git clean -q -fdx -e node_modules
   limit=$(config_of timeout)
   status=0
@@ -80,6 +84,21 @@ check() {
   if [ "$status" -ne 0 ] && ! zero "$old"; then work_git checkout -q -f --detach "$old"; fi
   log "check $(repo_name) ${new:0:12} $([ "$status" -eq 0 ] && echo pass || echo fail)"
   return "$status"
+}
+
+# version_tag <tag>: true when the tag name is a version of a package of main, v<semver> or <folder>-v<semver>, in a repo
+# that ships. Only release() makes those, in the bare repo.
+version_tag() {
+  local toml ship packages pkg prefix
+  toml=$(git show refs/heads/main:crate.toml 2>/dev/null) || return 1
+  ship=$(toml_value ship <<<"$toml")
+  [ -n "$ship" ] || return 1
+  packages=$(toml_value packages <<<"$toml")
+  for pkg in ${packages:-.}; do
+    if [ "$pkg" = . ]; then prefix=v; else prefix="$pkg-v"; fi
+    [[ $1 =~ ^${prefix//./\\.}[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 0
+  done
+  return 1
 }
 
 # in_image <kind> <limit> [<engine args>...] -- [<check.sh args>...]: run the repo's scripts/check.sh in its image, at
