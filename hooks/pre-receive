@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # crate's pre-receive: main moves only to a commit whose check passed on the exact tree main becomes. Git refuses the
-# whole push when this exits non-zero, and sends what it printed to the pusher. A branch other than main takes no check, and a version tag is refused.
+# whole push when this exits non-zero, and sends what it printed to the pusher. A branch other than main takes no check,
+# and a version tag is refused.
 set -euo pipefail
 # shellcheck source=lib/crate.sh
 . "$(dirname "$(readlink -f "$0")")/../lib/crate.sh"

@@ -86,8 +86,8 @@ check() {
   return "$status"
 }
 
-# version_tag <tag>: true when the tag name is a version of a package of main, v<semver> or <folder>-v<semver>, in a repo
-# that ships. Only release() makes those, in the bare repo.
+# version_tag <tag>: true when the tag name is one release() counts from for a package of main: v or <folder>-v, then a
+# digit (the same rule as release's ${prefix}[0-9]*), in a repo that ships. Only release() makes those, in the bare repo.
 version_tag() {
   local toml ship packages pkg prefix
   toml=$(git show refs/heads/main:crate.toml 2>/dev/null) || return 1
@@ -96,7 +96,7 @@ version_tag() {
   packages=$(toml_value packages <<<"$toml")
   for pkg in ${packages:-.}; do
     if [ "$pkg" = . ]; then prefix=v; else prefix="$pkg-v"; fi
-    [[ $1 =~ ^${prefix//./\\.}[0-9]+\.[0-9]+\.[0-9]+$ ]] && return 0
+    [[ $1 == "$prefix"[0-9]* ]] && return 0
   done
   return 1
 }
