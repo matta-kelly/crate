@@ -108,6 +108,9 @@ line that starts `crate:`. Exit 2 is a usage error, 1 a failure.
   template, `.devcontainer/Containerfile`, `scripts/dev-image-smoke.sh`
 - `--rev <commit>`: `hash` and `ref` read the commit's tree, from any git folder that holds it, a bare one too. The other
   three build from a checkout and refuse it
+- the registry: "manifest unknown" and "name unknown" read as a missing tag. ghcr says "denied" for a package that does
+  not exist yet, so `ensure` reads it as a missing tag too (a new repo's first image is made), while `ref` and `promote`
+  fail on it. Any other answer is a failure for every verb, and nothing is built or pushed on it
 - the engine: `podman` and `skopeo` from the PATH, with the registry login they read. `CONTAINER_HOST` may name a remote
   engine. The smoke mounts the checkout, so the checkout's path must be the same on the engine's host
 - the machine: `/etc/crate/machine.toml` (`CRATE_MACHINE` names another) gives a ceiling. With none, a build says once

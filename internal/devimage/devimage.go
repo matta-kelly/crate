@@ -50,7 +50,7 @@ func Ref(o Options) (string, error) {
 		return "", err
 	}
 	for _, tag := range []string{hash, "main"} {
-		digest, found, err := p.digest(tag)
+		digest, found, err := p.digest(tag, false)
 		if err != nil {
 			return "", err
 		}
@@ -69,7 +69,7 @@ func Ensure(o Options, placement machine.Placement) (string, error) {
 		return "", err
 	}
 	tag := p.image + ":" + hash
-	_, found, err := p.digest(hash)
+	_, found, err := p.digest(hash, true)
 	if err != nil {
 		return "", err
 	}
@@ -94,7 +94,7 @@ func Promote(o Options) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	_, found, err := p.digest(hash)
+	_, found, err := p.digest(hash, false)
 	if err != nil {
 		return "", err
 	}
@@ -139,9 +139,11 @@ func openAtHash(o Options) (*plan, string, error) {
 	return p, hash, err
 }
 
-// digest is the manifest digest of <image>:<tag>. A registry that says the tag is not there gives found
-// false. Any other failure of the ask is an error, never read as a missing tag.
-func (p *plan) digest(tag string) (digest string, found bool, err error) {
+// digest is the manifest digest of <image>:<tag>. A registry that says the tag or the name is not there
+// ("manifest unknown", "name unknown") gives found false. ghcr says "denied" for a package that does not exist
+// yet, so ensure, which makes the package, reads it as missing too (deniedIsMissing). Any other failure of the
+// ask is an error, never read as a missing tag.
+func (p *plan) digest(tag string, deniedIsMissing bool) (digest string, found bool, err error) {
 	ref := p.image + ":" + tag
 	var out, errb bytes.Buffer
 	err = run(call{name: "skopeo inspect", limit: limit.SkopeoInspect(), prog: "skopeo",
@@ -150,7 +152,8 @@ func (p *plan) digest(tag string) (digest string, found bool, err error) {
 		return strings.TrimSpace(out.String()), true, nil
 	}
 	msg := strings.TrimSpace(errb.String())
-	if strings.Contains(msg, "manifest unknown") {
+	if strings.Contains(msg, "manifest unknown") || strings.Contains(msg, "name unknown") ||
+		(deniedIsMissing && strings.Contains(msg, "denied")) {
 		return "", false, nil
 	}
 	if msg == "" {
@@ -160,7 +163,7 @@ func (p *plan) digest(tag string) (digest string, found bool, err error) {
 }
 
 func (p *plan) refOf(hash string) (string, error) {
-	digest, found, err := p.digest(hash)
+	digest, found, err := p.digest(hash, false)
 	if err == nil && !found {
 		err = fmt.Errorf("%s:%s is not in the registry after its push", p.image, hash)
 	}
