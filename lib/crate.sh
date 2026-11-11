@@ -86,20 +86,12 @@ check() {
   return "$status"
 }
 
-# version_tag <tag>: true when the tag name is one release() counts from for a package of main: v or <folder>-v, then a
-# digit (the same rule as release's ${prefix}[0-9]*), in a repo that ships. Only release() makes those, in the bare repo.
-version_tag() {
-  local toml ship packages pkg prefix
-  toml=$(git show refs/heads/main:crate.toml 2>/dev/null) || return 1
-  ship=$(toml_value ship <<<"$toml")
-  [ -n "$ship" ] || return 1
-  packages=$(toml_value packages <<<"$toml")
-  for pkg in ${packages:-.}; do
-    if [ "$pkg" = . ]; then prefix=v; else prefix="$pkg-v"; fi
-    [[ $1 == "$prefix"[0-9]* ]] && return 0
-  done
-  return 1
-}
+# version_tag <tag>: true when the tag name is shaped like a version: v or <folder>-v, then a digit (the same rule as
+# release's ${prefix}[0-9]*). The name alone decides, in every repo. Only release() makes those, in the bare repo.
+version_tag() { [[ $1 == v[0-9]* || $1 == *-v[0-9]* ]]; }
+
+# first_version_command <tag>: the command, run on the server, that sets a package's first version in the bare repo.
+first_version_command() { echo "git -C $(cd "$GIT_DIR" && pwd) tag $1 <commit>"; }
 
 # in_image <kind> <limit> [<engine args>...] -- [<check.sh args>...]: run the repo's scripts/check.sh in its image, at
 # the checkout $work, as node, with its own packages volume, stopped past <limit> seconds. <kind> names the container
@@ -189,7 +181,7 @@ release() {
       for other in $packages; do [ "$other" = . ] || paths+=(":(exclude)$other"); done
     fi
     if ! last=$(git describe --tags --abbrev=0 --match "${prefix}[0-9]*" "$main" 2>/dev/null); then
-      echo "crate: $pkg has no ${prefix}<version> tag to count from; tag its first version by hand" >&2
+      echo "crate: $pkg has no ${prefix}<version> tag to count from; set its first version on the server: $(first_version_command "${prefix}<version>")" >&2
       log "release $(repo_name) $pkg none: no tag to count from"
       continue
     fi

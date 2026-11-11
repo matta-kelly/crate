@@ -7,7 +7,7 @@ only to a commit whose check passed on the exact tree main becomes. A land is a 
   `CHECK_BASE` set to the old main. Red refuses the push and sends the check's output to the pusher. One check at a time
   per repo (the merge queue); a push that waited while main moved is told to pull with rebase and push again. A push
   whose commit the check's checkout cannot check out is refused, as is any push of a version tag (`v<semver>`,
-  `<folder>-v<semver>`): only crate makes those
+  `<folder>-v<semver>`), in every repo: only crate makes those
 - `hooks/post-receive`: after main moves, push it to the remote `github`, the public copy, then release it
   ([Release](#release)). A repo with postsubmit runs it in the background first, and is released only when it passes
   ([Postsubmit](#postsubmit))
@@ -50,7 +50,8 @@ Commits 1.0) as semver (SemVer 2.0). The tag is the truth: package.json's versio
   0.x only by a `v1.0.0` tag made by hand
 - the tag: `v<version>` for the package at `.`, `<folder>-v<version>` for one in a folder. A package's commits are the
   ones that touch its folder; for `.`, the ones that touch no other package's folder. A package with no version tag yet
-  makes none until its first is tagged by hand
+  makes none until its first is tagged by hand, on the server, in the bare repo:
+  `git -C <bare> tag v<version> <commit>`. A push of a version tag is refused, and says the same
 - the ship: crate tags main and copies the version tags to GitHub. The repo's own tag-triggered workflow publishes
   (for `npm`, by npm's trusted publishing: no token, with provenance). GitHub's tag ruleset lets the deploy key make
   version tags
