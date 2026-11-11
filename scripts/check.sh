@@ -7,7 +7,8 @@ shellcheck=docker.io/koalaman/shellcheck@sha256:61862eba1fcf09a484ebcc6feea46f17
 
 echo "== shellcheck"
 "${CRATE_ENGINE:-podman}" run --rm -v "$PWD:/src:ro" -w /src "$shellcheck" -x -P SCRIPTDIR/.. \
-  bin/crate hooks/pre-receive hooks/post-receive lib/crate.sh scripts/check.sh scripts/release.sh test/hooks.test.sh
+  bin/crate hooks/pre-receive hooks/post-receive lib/crate.sh scripts/check.sh scripts/release.sh test/hooks.test.sh test/apply.test.sh
 echo "== tests"
 test/hooks.test.sh
+test/apply.test.sh
 echo "check passed"

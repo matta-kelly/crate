@@ -7,6 +7,7 @@ only to a commit whose check passed on the exact tree main becomes. A land is a 
   `CHECK_BASE` set to the old main. Red refuses the push and sends the check's output to the pusher. One check at a time
   per repo (the merge queue); a push that waited while main moved is told to pull with rebase and push again
 - `hooks/post-receive`: after main moves, push it to the remote `github`, the public copy
+- `bin/crate apply <file|->`: make a server match its declaration: crate's version tag (`CRATE_VERSION`), where the bare repos live (`GIT_HOME`), where their copies go (`GITHUB_BASE`), and the repos (`REPOS`). Safe to run again: it moves this checkout to the version, inits each repo, and seeds a new one from GitHub
 - `bin/crate init <bare> [<github url>]`: make or take a bare repo, and put the hooks and rules on it (fast-forward only, no deletion). With an ssh GitHub url, it makes the repo's own deploy key on this machine and prints its public half
 - `lib/crate.sh`: what the hooks share
 
@@ -17,6 +18,7 @@ only to a commit whose check passed on the exact tree main becomes. A land is a 
 ```toml
 crate = "1"      # the crate version it runs
 image = "dev"    # its own dev image (scripts/dev-image.sh local), or an image ref
+timeout = "900"  # seconds a check may run; past it, the check is stopped and the push refused
 ```
 
 and `scripts/check.sh`, which reads `CHECK_BASE` to run only the sets a change touched.

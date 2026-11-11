@@ -22,7 +22,7 @@ not_ok() {
 
 # A fresh bare repo with crate on it, a second bare repo standing in for GitHub, and a client clone.
 setup() {
-  rm -rf "${tmp:?}"/*
+  cd "$tmp" && rm -rf "${tmp:?}"/*
   git init -q --bare -b main "$tmp/github.git"
   "$root/bin/crate" init "$tmp/repo.git" "$tmp/github.git" >/dev/null
   git init -q -b main "$tmp/client"
@@ -109,6 +109,39 @@ if [ $ra -eq 0 ] && [ $rb -ne 0 ] && grep -q "main moved" "$tmp/b.out" && [ "$or
   ok "two pushes at once: one lands, the other waits and is told main moved"
 else not_ok "two pushes at once: one lands, the other waits and is told main moved" "a=$ra b=$rb starts=$starts order=$order
 $(cat "$tmp/a.out" "$tmp/b.out")"; fi
+
+# a check past its limit is stopped, the push refused, and the next push is not held by it
+setup
+git push -q "$tmp/repo.git" main 2>/dev/null
+printf 'crate = "1"\nimage = "%s"\ntimeout = "3"\n' "$alpine" >crate.toml
+touch slow && sed -i 's/sleep 3/sleep 30/' scripts/check.sh && git add -A && git commit -qm hang
+before=$(main_of "$tmp/repo.git")
+start=$(date +%s)
+out=$(git push "$tmp/repo.git" main 2>&1)
+took=$(($(date +%s) - start))
+if [ "$(main_of "$tmp/repo.git")" = "$before" ] && grep -q "ran past its limit of 3s" <<<"$out" && [ "$took" -lt 25 ]; then
+  ok "a check past its limit is stopped, and the push refused"
+else not_ok "a check past its limit is stopped, and the push refused" "took=${took}s
+$out"; fi
+rm slow && git commit -qam unhang
+if git push -q "$tmp/repo.git" main 2>/dev/null; then ok "the next push is not held by the stopped check"
+else not_ok "the next push is not held by the stopped check"; fi
+
+# image "dev": the repo's own scripts/dev-image.sh names the image, run on the pushed commit
+setup
+git push -q "$tmp/repo.git" main 2>/dev/null
+cat >scripts/dev-image.sh <<SH
+#!/bin/sh
+# a stand-in: it reads the pushed commit, as the real one hashes it, then names the image
+[ "\$1" = local ] && git ls-tree HEAD crate.toml >/dev/null && echo "built nothing" && echo "$alpine"
+SH
+chmod +x scripts/dev-image.sh
+printf 'crate = "1"\nimage = "dev"\n' >crate.toml
+git add -A && git commit -qm dev
+out=$(git push "$tmp/repo.git" main 2>&1)
+if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "checking .* in $alpine" <<<"$out"; then
+  ok "image dev: the check runs in the image the repo's dev-image.sh names"
+else not_ok "image dev: the check runs in the image the repo's dev-image.sh names" "$out"; fi
 
 echo "1..$n"
 exit "$failed"

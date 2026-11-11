@@ -32,6 +32,9 @@ config_of() {
   sed -n "s/^[[:space:]]*$1[[:space:]]*=[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$work/crate.toml" | head -1
 }
 
+# The check's time limit is crate.toml's `timeout`, in seconds, 900 when it names none. A check past it is stopped, the
+# push refused, and the lock freed.
+
 # image_of: the image the check runs in. "dev" is the repo's own dev image, put on this machine by its
 # scripts/dev-image.sh (its copy when the hash is unchanged, so warm); anything else is an image ref.
 image_of() {
@@ -48,7 +51,7 @@ image_of() {
 # check <old> <new>: main may move from <old> to <new> only when the repo's check passes on <new>, which is the tree
 # main becomes. Holds the repo's lock for the whole check.
 check() {
-  local old=$1 new=$2 bare image status now base=()
+  local old=$1 new=$2 bare image status now limit name base=()
   bare=$(cd "$GIT_DIR" && pwd)
   work="$bare/crate/work"
   exec 9>"$bare/crate/lock"
@@ -69,13 +72,21 @@ check() {
   image=$(image_of) || return 1
   echo "crate: checking ${new:0:12} in $image"
   zero "$old" || base=(-e "CHECK_BASE=$old")
+  limit=$(config_of timeout)
+  limit=${limit:-900}
+  name="crate-$(repo_name)-check"
+  "$engine" rm -f "$name" >/dev/null 2>&1 || true
   status=0
-  "$engine" run --rm --userns=keep-id:uid=1000,gid=1000 --user 1000:1000 -e HOME=/home/node \
+  timeout -s KILL "$limit" "$engine" run --rm --name "$name" --userns=keep-id:uid=1000,gid=1000 --user 1000:1000 -e HOME=/home/node \
     --cpus=3 --cpu-shares=256 \
     -v "$work:$work" -v "$bare:$bare:ro" -v "crate-$(repo_name)-node-modules:$work/node_modules:U" \
     -e GIT_ALTERNATE_OBJECT_DIRECTORIES="${GIT_QUARANTINE_PATH:-}" \
     "${base[@]}" \
     -w "$work" "$image" scripts/check.sh || status=$?
+  if [ "$status" -eq 124 ] || [ "$status" -eq 137 ]; then
+    "$engine" rm -f "$name" >/dev/null 2>&1 || true
+    echo "crate: the check ran past its limit of ${limit}s, and was stopped" >&2
+  fi
   # A refused push takes its objects with it: point the checkout back at a commit that stays.
   if [ "$status" -ne 0 ] && ! zero "$old"; then work_git checkout -q -f --detach "$old"; fi
   log "check $(repo_name) ${new:0:12} $([ "$status" -eq 0 ] && echo pass || echo fail)"
