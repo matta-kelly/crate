@@ -197,6 +197,18 @@ repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
 $out"; fi
 done
 
+# release counts from every tag named the prefix and a digit, so the gate refuses all of those, prerelease or short
+for t in v2.0.0-rc.1 v2 v1.2 it-v1.0.0-beta it-v7 v3.1.4+build.5; do
+  git tag "$t"
+  out=$(git push "$tmp/repo.git" "$t" 2>&1)
+  rc=$?
+  if [ "$rc" -ne 0 ] && [ -z "$(tags_of "$tmp/repo.git")" ] && [ -z "$(tags_of "$tmp/github.git")" ] && grep -q "crate: " <<<"$out"; then
+    ok "a tag $t is one release counts from, so it is refused, and is on neither server"
+  else not_ok "a tag $t is one release counts from, so it is refused, and is on neither server" "rc=$rc
+repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
+$out"; fi
+done
+
 # an annotated version tag is a tag all the same
 git tag -a v2.0.0 -m "two"
 out=$(git push "$tmp/repo.git" v2.0.0 2>&1)
@@ -218,7 +230,7 @@ else not_ok "a version tag pushed with main refuses the whole push" "rc=$rc
 $out"; fi
 
 # a tag of any other name is not touched
-for t in nightly rc-2 release-1.0.0; do
+for t in nightly rc-2 release-1.0.0 vnext it-vnext; do
   git tag "$t"
   out=$(git push "$tmp/repo.git" "$t" 2>&1)
   rc=$?
