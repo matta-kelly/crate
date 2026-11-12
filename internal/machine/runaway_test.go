@@ -17,9 +17,8 @@ func TestARunawayDiesAlone(t *testing.T) {
 	if !f.running(neighbour) {
 		t.Fatalf("the neighbour: expected it to start before the runaway, got stopped")
 	}
-	runaway, _ := f.start(machine.Work, f.system("runaway"),
-		[]string{"--shm-size=600m"},
-		[]string{"sh", "-c", "dd if=/dev/zero of=/dev/shm/x bs=1M count=600 2>/dev/null; sleep 1"})
+	runaway, _ := f.start(machine.Work, f.system("runaway"), nil,
+		[]string{"sh", "-c", "exec awk 'BEGIN{for(i=0;;i++) a[i]=i}'"})
 
 	deadline := time.Now().Add(45 * time.Second)
 	for {

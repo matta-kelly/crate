@@ -4,6 +4,9 @@ package machine_test
 // and a manager with no cpuset.
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -59,16 +62,19 @@ func TestARemoteEnginePlacesNothingAndHoldsNothing(t *testing.T) {
 	}
 }
 
-// With no cpuset in the user's manager, Place refuses and says why and how to delegate it.
+// With no cpuset in the user's manager, Place refuses and says why and how to delegate it, even when the
+// manager's own message is only 'Invalid argument'.
 func TestPlaceRefusesWhenTheManagerHasNoCpuset(t *testing.T) {
-	f := newFixture(t, "0-1", "512M", 1, 1, 1)
-	manager := `#!/bin/sh
+	f := newFixture(t, "0", "512M", 1, 1, 1)
+	log := filepath.Join(t.TempDir(), "calls")
+	manager := fmt.Sprintf(`#!/bin/sh
+echo "$*" >> %q
 case "$*" in
 *CGroupControllers*) echo "cpu memory pids"; exit 0 ;;
-*set-property*) echo "Failed to set unit properties: cpuset controller is not available; delegate it with Delegate=cpuset" >&2; exit 1 ;;
+*set-property*) echo "Failed to set unit properties on the slice: Invalid argument" >&2; exit 1 ;;
 esac
 exit 0
-`
+`, log)
 	f.pathWith(map[string]string{"systemctl": manager, "systemd-run": manager})
 	_, err := machine.Default().Place(machine.Work, f.system("a"))
 	if err == nil {
@@ -78,28 +84,43 @@ exit 0
 	if !strings.Contains(message, "cpuset") {
 		t.Errorf("the refusal: expected it to say why (cpuset), got %q", err)
 	}
-	if !strings.Contains(message, "delegate") && !strings.Contains(message, "linger") {
+	if !strings.Contains(message, "delegate") {
 		t.Errorf("the refusal: expected it to say how to delegate cpuset, got %q", err)
+	}
+	if data, _ := os.ReadFile(log); strings.Contains(string(data), "systemd-run") {
+		t.Errorf("the refusal: expected no member started, got\n%s", data)
 	}
 }
 
 // A set-property that systemd refuses makes Place return an error that names the unit, the property and
-// systemd's message.
+// systemd's message, and starts no member.
 func TestAFailedSystemctlAskNamesTheUnitThePropertyAndTheMessage(t *testing.T) {
-	f := newFixture(t, "100-101", "512M", 1, 1, 1)
-	_, err := machine.Default().Place(machine.Work, f.system("a"))
+	f := newFixture(t, "0", "512M", 1, 1, 1)
+	log := filepath.Join(t.TempDir(), "calls")
+	manager := fmt.Sprintf(`#!/bin/sh
+echo "$*" >> %q
+case "$*" in
+*CGroupControllers*) echo "cpuset cpu memory pids"; exit 0 ;;
+*set-property*) echo "Failed to set unit properties on the slice: Invalid argument" >&2; exit 1 ;;
+esac
+exit 0
+`, log)
+	f.pathWith(map[string]string{"systemctl": manager, "systemd-run": manager})
+	placement, err := machine.Default().Place(machine.Work, f.system("a"))
 	if err == nil {
-		t.Fatalf("Place with CPUs the manager cannot set: expected an error, got none")
+		t.Fatalf("Place with a manager that refuses set-property: expected an error, got none")
+	}
+	if placement != "" {
+		t.Errorf("the failed ask: expected no placement, got %q", placement)
 	}
 	message := err.Error()
-	for _, want := range []string{f.slice + ".slice", "AllowedCPUs"} {
+	for _, want := range []string{f.slice + ".slice", "AllowedCPUs", "Invalid argument"} {
 		if !strings.Contains(message, want) {
 			t.Errorf("the error: expected it to name %q, got %q", want, message)
 		}
 	}
-	lower := strings.ToLower(message)
-	if !strings.Contains(lower, "invalid") && !strings.Contains(lower, "fail") && !strings.Contains(lower, "cpuset") {
-		t.Errorf("the error: expected systemd's own message, got %q", message)
+	if data, _ := os.ReadFile(log); strings.Contains(string(data), "systemd-run") {
+		t.Errorf("the failed ask: expected no member started, got\n%s", data)
 	}
 }
 

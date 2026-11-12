@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -326,6 +327,49 @@ func TestTheHoldStopsAtItsLimitAndNamesWhatItWaitedFor(t *testing.T) {
 	}
 	if took < 500*time.Millisecond || took > 10*time.Second {
 		t.Errorf("the wait past its limit: expected about one second (1 h divided by 3600), took %v", took)
+	}
+	files := f.slotFiles(machine.Check)
+	if len(files) != 1 {
+		t.Fatalf("the failed Hold: expected only the first system's record, got %v", files)
+	}
+	if record := readFile(t, files[0]); !strings.Contains(record, first) || strings.Contains(record, second) {
+		t.Errorf("the failed Hold left a record: expected %q to hold %q and not %q, got %q", files[0], first, second, record)
+	}
+}
+
+// The short lock of a kind's folder stops at limit.SlotLock and names the lock file.
+func TestTheFolderLockStopsAtItsLimit(t *testing.T) {
+	f := newFixture(t, "0-1", "512M", 1, 1, 1)
+	lockPath := filepath.Join(f.state, "crate", "slots", ".check.lock")
+	if err := os.MkdirAll(filepath.Dir(lockPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lock, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0o644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+
+	started := time.Now()
+	h := f.startHelper("hold", machine.Check, f.system("a"), "CRATE_LIMIT_SCALE=10")
+	out := h.waitOut(t, 10*time.Second)
+	took := time.Since(started)
+	message, ok := strings.CutPrefix(out, "err ")
+	if !ok {
+		t.Fatalf("Hold with the folder locked: expected an error past limit.SlotLock, got %q", out)
+	}
+	if !strings.Contains(message, lockPath) {
+		t.Errorf("the lock's error: expected it to name %s, got %q", lockPath, message)
+	}
+	if took < 500*time.Millisecond || took > 10*time.Second {
+		t.Errorf("the lock's wait: expected about one second (10 s divided by 10), took %v", took)
+	}
+	if files := f.slotFiles(machine.Check); len(files) != 0 {
+		t.Errorf("a Hold that never took the lock: expected no slot, got %v", files)
 	}
 }
 

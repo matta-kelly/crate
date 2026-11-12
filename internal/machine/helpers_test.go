@@ -391,6 +391,58 @@ func (f *fixture) startHelperEnv(baseEnv []string, mode, kind, system string, en
 	return h
 }
 
+// startHelperNoSys runs a holder in a mount namespace where /sys is an empty folder, so the CPU list it
+// reads cannot be read.
+func (f *fixture) startHelperNoSys(mode, kind, system string, env ...string) *helperProc {
+	f.t.Helper()
+	hidden := f.t.TempDir()
+	dir := f.t.TempDir()
+	h := &helperProc{
+		out:     filepath.Join(dir, "out"),
+		errFile: filepath.Join(dir, "err"),
+		done:    make(chan struct{}),
+	}
+	cmd := exec.Command("unshare", "-Urm", "sh", "-c",
+		`mount --bind "$1" /sys; shift; exec "$@"`, "sh", hidden, os.Args[0], "-test.run=^TestHelperProcess$")
+	errFile, err := os.Create(h.errFile)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	cmd.Stdout, cmd.Stderr = errFile, errFile
+	base := []string{
+		helperMarker + "=1",
+		"HELPER_MODE=" + mode,
+		"HELPER_KIND=" + kind,
+		"HELPER_SYSTEM=" + system,
+		"HELPER_OUT=" + h.out,
+	}
+	cmd.Env = append(os.Environ(), append(base, env...)...)
+	if err := cmd.Start(); err != nil {
+		errFile.Close()
+		f.t.Fatal(err)
+	}
+	h.cmd = cmd
+	go func() {
+		_ = cmd.Wait()
+		_ = errFile.Close()
+		close(h.done)
+	}()
+	f.t.Cleanup(func() {
+		select {
+		case <-h.done:
+			return
+		default:
+		}
+		_ = cmd.Process.Kill()
+		select {
+		case <-h.done:
+		case <-time.After(5 * time.Second):
+			f.t.Logf("the holder pid %d did not exit after a kill", cmd.Process.Pid)
+		}
+	})
+	return h
+}
+
 func (h *helperProc) stderr() string {
 	data, _ := os.ReadFile(h.errFile)
 	return string(data)
