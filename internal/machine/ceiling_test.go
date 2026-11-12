@@ -29,14 +29,17 @@ func TestTheMachinesSliceHoldsTheCeiling(t *testing.T) {
 		names = append(names, name)
 	}
 	time.Sleep(time.Second)
+	started := time.Now()
 	before := sumUsage(f, names)
 	time.Sleep(5 * time.Second)
 	used := sumUsage(f, names) - before
-	// two CPUs over five seconds is ten CPU-seconds; a little slack is the accounting's own.
-	if used > 11_000_000 {
-		t.Errorf("the slice's CPU time over five seconds: expected at most two CPUs (11s with slack), got %d us", used)
+	// two CPUs over the window is its upper bound; the window is the wall it actually took, since a loaded
+	// machine can make the sleep longer than five seconds.
+	wall := int64(time.Since(started) / time.Microsecond)
+	if limit := wall*2 + wall/10 + 100_000; used > limit {
+		t.Errorf("the slice's CPU time over %d us: expected at most two CPUs (%d us with slack), got %d us", wall, limit, used)
 	}
-	peak, err := strconv.ParseInt(readFile(t, f.base()+"/memory.peak"), 10, 64)
+	peak, err := strconv.ParseInt(strings.TrimSpace(readFile(t, f.base()+"/memory.peak")), 10, 64)
 	if err != nil {
 		t.Fatalf("memory.peak: %v", err)
 	}
@@ -50,14 +53,16 @@ func TestOneMemberAloneTakesTheWholeCeiling(t *testing.T) {
 	f := newFixture(t, "0-1", "512M", 4, 4, 4)
 	name, _ := f.start(machine.Work, f.system("a"), nil, burn())
 	time.Sleep(time.Second)
+	started := time.Now()
 	before := f.cpu(name)
 	time.Sleep(5 * time.Second)
 	used := f.cpu(name) - before
-	if used < 9_000_000 {
-		t.Errorf("one member alone over five seconds: expected at least nine tenths of two CPUs (9s), got %d us", used)
+	wall := int64(time.Since(started) / time.Microsecond)
+	if used < wall*2*9/10 {
+		t.Errorf("one member alone over %d us: expected at least nine tenths of two CPUs (%d us), got %d us", wall, wall*2*9/10, used)
 	}
-	if used > 11_000_000 {
-		t.Errorf("one member alone over five seconds: expected at most two CPUs (11s with slack), got %d us", used)
+	if limit := wall*2 + wall/10 + 100_000; used > limit {
+		t.Errorf("one member alone over %d us: expected at most two CPUs (%d us with slack), got %d us", wall, limit, used)
 	}
 	cg := f.cgroup(name)
 	if max := cgroupField(t, cg, "cpu.max"); max != "" {

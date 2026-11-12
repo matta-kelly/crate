@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -131,6 +132,50 @@ const forbiddenStub = `#!/usr/bin/env bash
 echo "FORBIDDEN $(basename "$0") $*" >>"$T/calls"
 exit 1
 `
+
+// testSliceName is a slice name of the test's own, so a run's units are easy to find and stop.
+func testSliceName() string { return fmt.Sprintf("crate-t%d-%d", os.Getpid(), time.Now().UnixNano()) }
+
+// stopUserSlices stops every user slice whose name starts with prefix, deepest first, at the test's cleanup.
+func stopUserSlices(t *testing.T, prefix string) {
+	t.Helper()
+	t.Cleanup(func() {
+		out, _ := exec.Command("systemctl", "--user", "list-units", "--type=slice", "--all",
+			"--plain", "--no-legend", "--no-pager", "--full").CombinedOutput()
+		var units []string
+		for _, line := range strings.Split(string(out), "\n") {
+			fields := strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
+			if name := fields[0]; strings.HasPrefix(name, prefix) && strings.HasSuffix(name, ".slice") {
+				units = append(units, name)
+			}
+		}
+		sort.Slice(units, func(i, j int) bool { return len(units[i]) > len(units[j]) })
+		for _, unit := range units {
+			_, _ = exec.Command("systemctl", "--user", "stop", unit).CombinedOutput()
+		}
+		for _, unit := range units {
+			_, _ = exec.Command("systemctl", "--user", "reset-failed", unit).CombinedOutput()
+		}
+	})
+}
+
+// realSystemdPATH is the real systemctl and systemd-run before the fixture's stand-ins, so a test of the
+// binary's real placement keeps the stand-in podman and skopeo it needs for the build.
+func realSystemdPATH(t *testing.T, bin string) string {
+	t.Helper()
+	dir := t.TempDir()
+	for _, name := range []string{"systemctl", "systemd-run", "machinectl"} {
+		path, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		must(t, os.Symlink(path, filepath.Join(dir, name)))
+	}
+	return dir + string(os.PathListSeparator) + bin + string(os.PathListSeparator) + os.Getenv("PATH")
+}
 
 // fx is one fixture: T holds the repo, the stand-ins and their files.
 type fx struct {

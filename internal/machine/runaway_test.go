@@ -12,10 +12,14 @@ import (
 
 func TestARunawayDiesAlone(t *testing.T) {
 	f := newFixture(t, "0-1", "512M", 4, 4, 4)
+	neighbour, _ := f.start(machine.Check, f.system("neighbour"), nil, []string{"sleep", "120"})
+	time.Sleep(time.Second)
+	if !f.running(neighbour) {
+		t.Fatalf("the neighbour: expected it to start before the runaway, got stopped")
+	}
 	runaway, _ := f.start(machine.Work, f.system("runaway"),
 		[]string{"--shm-size=600m"},
 		[]string{"sh", "-c", "dd if=/dev/zero of=/dev/shm/x bs=1M count=600 2>/dev/null; sleep 1"})
-	neighbour, _ := f.start(machine.Check, f.system("neighbour"), nil, []string{"sleep", "120"})
 
 	deadline := time.Now().Add(45 * time.Second)
 	for {

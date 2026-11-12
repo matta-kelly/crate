@@ -110,14 +110,14 @@ func TestAHolderThatExitsAfterBindKeepsTheSlotUntilItsNetworkGoes(t *testing.T) 
 	f.oneSlot(machine.Attempt)
 
 	release := noFile(t)
-	h2 := f.startHelper("hold", machine.Attempt, second, "HELPER_RELEASE="+release, "CRATE_LIMIT_SCALE=3600")
+	h2 := f.startHelper("hold", machine.Attempt, second, "HELPER_RELEASE="+release, "CRATE_LIMIT_SCALE=360")
 	time.Sleep(time.Second)
 	if _, err := os.Stat(h2.out); err == nil {
 		t.Fatalf("the second Hold: expected it to wait, since the first system's network still exists")
 	}
 	f.networks = removeString(f.networks, first)
 	f.run("podman", "network", "rm", first)
-	at := outTime(t, h2.waitOut(t, 10*time.Second))
+	at := outTime(t, h2.waitOut(t, 15*time.Second))
 	if at.Before(time.Now().Add(-10 * time.Second)) {
 		t.Fatalf("the second Hold: expected a fresh hold, got one from %v", at)
 	}
@@ -371,16 +371,22 @@ func TestManyHoldsAtOnceTakeOneSlotEach(t *testing.T) {
 	if len(files) != len(holders) {
 		t.Fatalf("six Holds at once: expected six slot files, got %d: %v", len(files), files)
 	}
+	contents := map[string]string{}
+	for _, file := range files {
+		contents[file] = readFile(t, file)
+	}
 	for _, h := range holders {
 		named := 0
-		for _, file := range files {
-			if strings.Contains(readFile(t, file), h.system) {
+		for _, text := range contents {
+			if strings.Contains(text, h.system) {
 				named++
 			}
 		}
 		if named != 1 {
 			t.Errorf("the slot records: expected exactly one to name %q, got %d", h.system, named)
 		}
+	}
+	for _, h := range holders {
 		writeFile(t, h.release)
 	}
 }

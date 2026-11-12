@@ -11,9 +11,11 @@ import (
 
 func TestARemoteEngineSaysOnceThatItPlacesNothing(t *testing.T) {
 	f := newFx(t, "que-pasa")
+	slice := testSliceName()
+	stopUserSlices(t, slice)
 	file := filepath.Join(f.dir, "machine.toml")
 	must(t, os.WriteFile(file, []byte("cpus = \"0-1\"\nmemory = \"512M\"\n\n[count]\ncheck = 1\npostsubmit = 1\nattempt = 1\n"), 0o644))
-	r := f.dev([]string{"CRATE_MACHINE=" + file, "CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock"}, "ensure")
+	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice, "CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock"}, "ensure")
 	if r.code != 0 {
 		t.Fatalf("ensure with CONTAINER_HOST and a machine file: expected exit 0, got %s", r)
 	}

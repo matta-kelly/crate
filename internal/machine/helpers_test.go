@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -81,7 +82,37 @@ func (f *fixture) cleanup() {
 	for _, n := range f.networks {
 		_, _ = exec.Command("podman", "network", "rm", "-f", n).CombinedOutput()
 	}
-	_, _ = exec.Command("systemctl", "--user", "stop", f.slice+".slice").CombinedOutput()
+	f.stopSlices()
+}
+
+// stopSlices stops every slice this test made, deepest first: each leaf, its kind's slice and the machine's
+// own. A unit that a helper process made is found by its name's prefix, so a holder cannot leave one behind.
+func (f *fixture) stopSlices() {
+	out, _ := exec.Command("systemctl", "--user", "list-units", "--type=slice", "--all",
+		"--plain", "--no-legend", "--no-pager", "--full").CombinedOutput()
+	var units []string
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if name := fields[0]; strings.HasPrefix(name, f.slice) && strings.HasSuffix(name, ".slice") {
+			units = append(units, name)
+		}
+	}
+	units = append(units, f.slice+".slice")
+	sort.Slice(units, func(i, j int) bool { return len(units[i]) > len(units[j]) })
+	seen := map[string]bool{}
+	for _, unit := range units {
+		if seen[unit] {
+			continue
+		}
+		seen[unit] = true
+		_, _ = exec.Command("systemctl", "--user", "stop", unit).CombinedOutput()
+	}
+	for unit := range seen {
+		_, _ = exec.Command("systemctl", "--user", "reset-failed", unit).CombinedOutput()
+	}
 }
 
 // run runs a command and fails the test with its output when it fails.

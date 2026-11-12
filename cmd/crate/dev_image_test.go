@@ -913,9 +913,11 @@ func TestAMachineWithNoFileSaysOnceThatItHasNoCeiling(t *testing.T) {
 
 func TestAMachineWithAFileNeverSaysItHasNoCeiling(t *testing.T) {
 	f := newFx(t, "que-pasa")
+	slice := testSliceName()
+	stopUserSlices(t, slice)
 	file := filepath.Join(f.dir, "machine.toml")
-	must(t, os.WriteFile(file, []byte("cpus = \"2-15\"\nmemory = \"24G\"\n\n[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"), 0o644))
-	r := f.dev([]string{"CRATE_MACHINE=" + file}, "local")
+	must(t, os.WriteFile(file, []byte("cpus = \"0-1\"\nmemory = \"512M\"\n\n[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"), 0o644))
+	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice, "PATH=" + realSystemdPATH(t, f.bin)}, "local")
 	if r.code != 0 || strings.Contains(r.err, "no ceiling") {
 		t.Errorf("local that builds, with a machine file: expected exit 0 and no word of a ceiling, got %s", r)
 	}
