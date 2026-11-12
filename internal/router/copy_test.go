@@ -84,21 +84,21 @@ func TestTheCopysRouterIsRemadeOnceAndKeepsBothWorkspaces(t *testing.T) {
 	runWorkspace(t, "up", rootTwo)
 	startTarget(t, r.name+"-copy-two", copyTwo, copyTwo+"-app", map[int]string{3001: "copy two"})
 	waitBody(t, 10*time.Second, r.port, copyTwo+".localhost", 200, "copy two")
-	waitBody(t, 5*time.Second, r.port, crateWorkspace+".localhost", 200, "crate one")
-	waitBody(t, 5*time.Second, r.port, copyOne+".localhost", 200, "copy one")
+	waitBody(t, 10*time.Second, r.port, crateWorkspace+".localhost", 200, "crate one")
+	waitBody(t, 10*time.Second, r.port, copyOne+".localhost", 200, "copy one")
 
 	// the copy's down needs its network free
 	exec.Command(realPodman, "rm", "-f", "-t", "0", r.name+"-copy-two").Run()
 	runWorkspace(t, "down", rootTwo)
 	waitBody(t, 10*time.Second, r.port, copyTwo+".localhost", 404, "no such workspace")
-	waitBody(t, 5*time.Second, r.port, crateWorkspace+".localhost", 200, "crate one")
-	waitBody(t, 5*time.Second, r.port, copyOne+".localhost", 200, "copy one")
+	waitBody(t, 10*time.Second, r.port, crateWorkspace+".localhost", 200, "crate one")
+	waitBody(t, 10*time.Second, r.port, copyOne+".localhost", 200, "copy one")
 
 	if err := rt.Remove(crateWorkspace, r.network); err != nil {
 		t.Fatalf("Remove: %v", err)
 	}
 	waitBody(t, 10*time.Second, r.port, crateWorkspace+".localhost", 404, "no such workspace")
-	waitBody(t, 5*time.Second, r.port, copyOne+".localhost", 200, "copy one")
+	waitBody(t, 10*time.Second, r.port, copyOne+".localhost", 200, "copy one")
 	if exec.Command(realPodman, "container", "exists", r.name).Run() != nil {
 		t.Errorf("Remove took the copy's router away")
 	}

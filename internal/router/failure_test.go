@@ -17,7 +17,6 @@ import (
 // Caddy's message.
 func TestAReloadThatKeepsFailingTakesTheRouteBack(t *testing.T) {
 	r := newRig(t)
-	t.Setenv("CRATE_LIMIT_SCALE", "30")
 	const message = "stand-in: the router did not take its routes"
 	s := withPodmanStandIn(t, "reload", "always", message, 0)
 
@@ -123,7 +122,6 @@ func TestANetworkDisconnectThatFailsMakesRemoveFail(t *testing.T) {
 // A changed list whose reload keeps failing puts the old route file back, byte for byte.
 func TestAReloadThatKeepsFailingRestoresTheOldRouteFile(t *testing.T) {
 	r := newRig(t)
-	t.Setenv("CRATE_LIMIT_SCALE", "30")
 	addRoutes(t, r.workspace, r.network, webAndAPI(r.workspace))
 	old, err := os.ReadFile(r.routeFile(r.workspace))
 	if err != nil {
@@ -207,7 +205,7 @@ func TestAPassingRouterLimitIsNamed(t *testing.T) {
 	t.Run("podman", func(t *testing.T) {
 		r := newRig(t)
 		t.Setenv("CRATE_LIMIT_SCALE", "30")
-		withPodmanStandIn(t, "run", "once", "stand-in: too slow", 2*time.Second)
+		withFakePodman(t, "run", 2*time.Second)
 		err := router.New(machine.Default()).Add(r.workspace, r.network, webAndAPI(r.workspace))
 		if err == nil {
 			t.Fatalf("Add: expected an error when a podman call passes RouterPodman")
@@ -218,8 +216,7 @@ func TestAPassingRouterLimitIsNamed(t *testing.T) {
 	})
 	t.Run("reload", func(t *testing.T) {
 		r := newRig(t)
-		t.Setenv("CRATE_LIMIT_SCALE", "30")
-		withPodmanStandIn(t, "reload", "always", "stand-in: too slow", 2*time.Second)
+		withFakePodman(t, "reload", 12*time.Second)
 		err := router.New(machine.Default()).Add(r.workspace, r.network, webAndAPI(r.workspace))
 		if err == nil {
 			t.Fatalf("Add: expected an error when the reload passes RouterReload")

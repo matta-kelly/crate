@@ -257,9 +257,9 @@ func TestTheRouterDefaultsToTheXDGStateFolder(t *testing.T) {
 func TestTheRouterDefaultsToTheWorkspaceRouterName(t *testing.T) {
 	r := newRig(t)
 	t.Setenv("WORKSPACE_ROUTER", "")
-	fake := withFakePodman(t)
+	fake := withFakePodman(t, "", 0)
 	if err := router.New(machine.Default()).Add(r.workspace, r.network, webAndAPI(r.workspace)); err == nil {
-		t.Fatalf("Add: expected the fake podman's run to fail")
+		t.Fatalf("Add: expected the fake podman's reload to fail")
 	}
 	found := false
 	for _, call := range fake.calls(t) {

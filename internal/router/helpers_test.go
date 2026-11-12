@@ -258,22 +258,35 @@ exec "{{REAL}}" "$@"
 	return &standIn{log: log}
 }
 
-// withFakePodman puts a podman on the PATH that never runs the real one: it answers enough for a make to be
-// reached, logs each call, and fails the run. A test reads the calls from s.log, so no person's router is touched.
-func withFakePodman(t *testing.T) *standIn {
+// withFakePodman puts a podman on the PATH that never runs the real one: it logs each call, says the router's
+// network exists and its container does not, and lets a make succeed. When hang is run or reload, that call
+// sleeps until its limit passes; every other call fails. So no person's router is touched.
+func withFakePodman(t *testing.T, hang string, sleep time.Duration) *standIn {
 	t.Helper()
 	dir := t.TempDir()
 	log := filepath.Join(dir, "calls")
 	const raw = `#!/usr/bin/env bash
 printf '%s\n' "$*" >> "{{LOG}}"
+hit=0
+case "{{HANG}}" in
+  run) [ "${1:-}" = run ] && hit=1 ;;
+  reload) [ "${1:-}" = exec ] && case "$*" in *"caddy reload"*) hit=1 ;; esac ;;
+esac
+if [ "$hit" = 1 ]; then
+  exec sleep {{SLEEP}}
+fi
 case "${1:-}" in
   network) [ "${2:-}" = exists ] && exit 0; exit 1 ;;
   container) [ "${2:-}" = exists ] && exit 1; exit 1 ;;
-  run) printf '%s\n' "fake podman: run stopped" >&2; exit 1 ;;
+  run) exit 0 ;;
 esac
 exit 1
 `
-	script := strings.NewReplacer("{{LOG}}", log).Replace(raw)
+	script := strings.NewReplacer(
+		"{{LOG}}", log,
+		"{{HANG}}", hang,
+		"{{SLEEP}}", strconv.Itoa(int(sleep/time.Second)),
+	).Replace(raw)
 	path := filepath.Join(dir, "podman")
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
