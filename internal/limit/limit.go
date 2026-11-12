@@ -30,9 +30,14 @@ func scale() (int, error) {
 	return n, nil
 }
 
+// scaled divides a limit by the factor, but never below 1 s: on a busy machine a call needs that long
+// to be met, whatever the factor.
 func scaled(d time.Duration) time.Duration {
 	n, _ := scale()
-	return d / time.Duration(n)
+	if n == 1 {
+		return d
+	}
+	return max(d/time.Duration(n), time.Second)
 }
 
 func Git() time.Duration           { return scaled(30 * time.Second) }
