@@ -59,7 +59,7 @@ func wantAt(name string, want, div time.Duration) time.Duration {
 	return floored(want, div)
 }
 
-func TestTheScaleDividesEveryLimitAndNoneIsLessThanOneSecond(t *testing.T) {
+func TestTheScaleDividesEveryLimitToNoLessThanOneSecond(t *testing.T) {
 	// 900 and 3600 reach the floor for the 30 s limits; 1000000 reaches it for every limit
 	for _, scale := range []struct {
 		env string
@@ -72,21 +72,8 @@ func TestTheScaleDividesEveryLimitAndNoneIsLessThanOneSecond(t *testing.T) {
 				if want := wantAt(l.name, l.want, scale.div); got != want {
 					t.Errorf("%s at scale %s: expected %v, got %v", l.name, scale.env, want, got)
 				}
-				if got < time.Second {
-					t.Errorf("%s at scale %s: expected at least 1s, got %v", l.name, scale.env, got)
-				}
 			}
 		})
-	}
-}
-
-func TestAtAScaleOf900PushIsOneSecondAndSkopeoInspectIsToo(t *testing.T) {
-	t.Setenv("CRATE_LIMIT_SCALE", "900")
-	if got := limit.Push(); got != time.Second {
-		t.Errorf("Push: expected 1s, got %v", got)
-	}
-	if got := limit.SkopeoInspect(); got != time.Second {
-		t.Errorf("SkopeoInspect: expected 1s, not 33ms, got %v", got)
 	}
 }
 
