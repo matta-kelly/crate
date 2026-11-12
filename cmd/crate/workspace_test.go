@@ -346,9 +346,12 @@ func TestTheWorkspaceVerbsAndDashC(t *testing.T) {
 	}
 
 	// an attempt in a checkout whose workspace is up is refused, and says why.
-	r := w.mustRun(w.root, "up", "--attempt")
-	if r.code != 1 || !hasReasonLine(r.err) || !strings.Contains(r.err, "attempt") {
-		t.Errorf("up --attempt with the workspace up: expected exit 1 and a reason that names the attempt, got %s", r)
+	attempt, err := w.run(w.root, "up", "--attempt")
+	if err != nil {
+		t.Fatalf("crate up --attempt: %v", err)
+	}
+	if attempt.code != 1 || !hasReasonLine(attempt.err) || !strings.Contains(attempt.err, "attempt") {
+		t.Errorf("up --attempt with the workspace up: expected exit 1 and a reason that names the attempt, got %s", attempt)
 	}
 
 	// down with -C leaves nothing; a second down changes nothing.
