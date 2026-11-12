@@ -72,8 +72,13 @@ func devImage(args []string) error {
 	return nil
 }
 
-// placeBuild is where this machine runs a dev image's build. It says once when the machine has no ceiling.
+// placeBuild is where this machine runs a dev image's build. It says once when the machine has no ceiling, and
+// once when the engine is remote and no slice of this machine can hold the build.
 func placeBuild() (machine.Placement, error) {
+	if os.Getenv("CONTAINER_HOST") != "" {
+		fmt.Fprintln(os.Stderr, "crate: CONTAINER_HOST names a remote engine: crate places nothing and holds no slot")
+		return "", nil
+	}
 	cfg, err := machine.Read(machine.Path())
 	if err != nil {
 		return "", err
