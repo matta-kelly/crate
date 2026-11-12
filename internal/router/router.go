@@ -22,6 +22,9 @@ import (
 // image is the router's pinned Caddy, the copy's image.
 const image = "docker.io/library/caddy:2.10"
 
+// remakeFailed is the router's mark that a remake left no router, so the next make says so once.
+const remakeFailed = "remake-failed"
+
 // caddyfile is the router's Caddyfile, the copy's: every route file imported into one site, and the 404 after.
 const caddyfile = `{
 	admin localhost:2019
@@ -215,7 +218,11 @@ func (r *Router) ensure(c config, network string) error {
 		}
 	}
 	if !r.exists(c.name) {
-		return r.make(c, []string{c.name, network})
+		if err := r.make(c, []string{c.name, network}); err != nil {
+			return err
+		}
+		r.sayRemade(c)
+		return nil
 	}
 	cpus, err := r.podman("inspect", c.name, "--format", "{{.HostConfig.NanoCpus}}")
 	if err != nil {
@@ -229,7 +236,15 @@ func (r *Router) ensure(c config, network string) error {
 		if _, err := r.podman("rm", "-f", c.name); err != nil {
 			return err
 		}
-		return r.make(c, append(networks, network))
+		mark := filepath.Join(c.state, remakeFailed)
+		if err := os.WriteFile(mark, nil, 0o644); err != nil {
+			return err
+		}
+		if err := r.make(c, append(networks, network)); err != nil {
+			return err
+		}
+		os.Remove(mark)
+		return nil
 	}
 	if _, err := r.podman("start", c.name); err != nil {
 		return err
@@ -244,6 +259,16 @@ func (r *Router) ensure(c config, network string) error {
 		}
 	}
 	return nil
+}
+
+// sayRemade is the word after a make that followed a failed remake: once, then the mark is gone.
+func (r *Router) sayRemade(c config) {
+	mark := filepath.Join(c.state, remakeFailed)
+	if _, err := os.Stat(mark); err != nil {
+		return
+	}
+	os.Remove(mark)
+	fmt.Fprintln(os.Stderr, "crate: the router was gone after a failed remake: made it again")
 }
 
 // make runs the router's container, placed through the machine and on every network, with the copy's port and
