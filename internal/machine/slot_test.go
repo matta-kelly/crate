@@ -435,7 +435,7 @@ func TestManyHoldsAtOnceTakeOneSlotEach(t *testing.T) {
 	}
 }
 
-// Each systemctl and systemd-run call stops at limit.Systemd and names the call.
+// A systemctl call stops at limit.Systemd and names the call.
 func TestASystemdCallStopsAtItsLimit(t *testing.T) {
 	f := newFixture(t, "0-1", "512M", 1, 1, 1)
 	hang := "#!/bin/sh\nsleep 60\n"
@@ -453,5 +453,74 @@ func TestASystemdCallStopsAtItsLimit(t *testing.T) {
 	}
 	if took < 500*time.Millisecond || took > 10*time.Second {
 		t.Errorf("the call past its limit: expected about one second (30 s divided by 30), took %v", took)
+	}
+}
+
+// leafOf is the slice Place gives for a kind and system, escaped as systemd-escape does.
+func leafOf(f *fixture, kind, system string) string {
+	return f.slice + "-" + kind + "-" + strings.ReplaceAll(system, "-", `\x2d`) + ".slice"
+}
+
+// The systemd-run fallback stops at limit.Systemd and names the leaf slice it was to make.
+func TestTheSystemdRunFallbackStopsAtItsLimitAndNamesTheLeaf(t *testing.T) {
+	f := newFixture(t, "0-1", "512M", 1, 1, 1)
+	system := f.system("a")
+	leaf := leafOf(f, machine.Work, system)
+	notFound := `#!/bin/sh
+for a in "$@"; do last=$a; done
+echo "Failed to start unit: Unit $last not found" >&2
+exit 1
+`
+	f.pathWith(map[string]string{
+		"systemctl":   notFound,
+		"systemd-run": "#!/bin/sh\nsleep 60\n",
+	})
+	t.Setenv("CRATE_LIMIT_SCALE", "30")
+
+	started := time.Now()
+	placement, err := machine.Default().Place(machine.Work, system)
+	took := time.Since(started)
+	if err == nil {
+		t.Fatalf("Place whose startSlice falls back to systemd-run that never answers: expected an error, got none")
+	}
+	if placement != "" {
+		t.Errorf("the failed ask: expected no placement, got %q", placement)
+	}
+	for _, want := range []string{leaf, "systemd-run"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error: expected it to name %q, got %q", want, err)
+		}
+	}
+	if took < 500*time.Millisecond || took > 10*time.Second {
+		t.Errorf("the fallback past its limit: expected about one second (30 s divided by 30), took %v", took)
+	}
+}
+
+// A systemd-run that fails names the leaf slice and systemd's message.
+func TestAFailedSystemdRunNamesTheLeafAndTheMessage(t *testing.T) {
+	f := newFixture(t, "0-1", "512M", 1, 1, 1)
+	system := f.system("a")
+	leaf := leafOf(f, machine.Work, system)
+	notFound := `#!/bin/sh
+for a in "$@"; do last=$a; done
+echo "Failed to start unit: Unit $last not found" >&2
+exit 1
+`
+	f.pathWith(map[string]string{
+		"systemctl":   notFound,
+		"systemd-run": "#!/bin/sh\necho \"Failed to start transient scope: Access denied\" >&2\nexit 1\n",
+	})
+
+	placement, err := machine.Default().Place(machine.Work, system)
+	if err == nil {
+		t.Fatalf("Place whose systemd-run fallback fails: expected an error, got none")
+	}
+	if placement != "" {
+		t.Errorf("the failed ask: expected no placement, got %q", placement)
+	}
+	for _, want := range []string{leaf, "Access denied"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error: expected it to name %q, got %q", want, err)
+		}
 	}
 }
