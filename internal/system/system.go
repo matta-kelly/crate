@@ -59,12 +59,6 @@ type System struct {
 // New makes a system on m. It starts nothing.
 func New(m machine.Machine, spec Spec) *System { return &System{m: m, spec: spec} }
 
-// Spec is what the system was made from.
-func (s *System) Spec() Spec { return s.spec }
-
-// Name is the system's name: its network, its pods, its containers and its volumes start with it.
-func (s *System) Name() string { return s.spec.Name }
-
 // Made says whether the system's network exists, so the caller made it at least once.
 func (s *System) Made() (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), limit.Podman())
@@ -153,12 +147,6 @@ func (s *System) Up(ctx context.Context) (err error) {
 			_ = s.remove(s.spec.Keep, true)
 		}
 	}()
-
-	if s.image == "" {
-		if err := s.Image(); err != nil {
-			return err
-		}
-	}
 
 	made, err := s.networkExists(ctx)
 	if err != nil {

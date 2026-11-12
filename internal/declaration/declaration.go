@@ -31,8 +31,6 @@ func (t Tools) Folders() ([]string, error) {
 	switch v := t.Volumes.(type) {
 	case nil:
 		return nil, nil
-	case []string:
-		return v, nil
 	case []any:
 		folders := make([]string, len(v))
 		for i, e := range v {

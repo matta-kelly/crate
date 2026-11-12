@@ -156,6 +156,7 @@ so the tools member reaches its own `postgres` by name. A container may set no `
 `resources.requests`. A volume in a service document is `<name>-<key>`. The tools member's volumes are
 `<name>-<slug>`, the folder with its leading dots taken away and each character not `a-z` or `0-9` made `-`.
 
+## Check
 
 `just check`: `go vet`, `go test ./...`, shellcheck on the shell that is left, then `test/hooks.test.sh`, `test/apply.test.sh`, `test/release.test.sh` and
 `test/postsubmit.test.sh` on real git and podman.
