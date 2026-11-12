@@ -116,7 +116,8 @@ line that starts `crate:`. Exit 2 is a usage error, 1 a failure.
 - the machine: `/etc/crate/machine.toml` (`CRATE_MACHINE` names another) gives a ceiling. With none, a build says once
   on stderr that the machine has no ceiling
 - limits: every call has one, in `internal/limit`. `CRATE_LIMIT_SCALE` (a whole number of 1 or more) divides them all,
-  for tests
+  but a limit so divided is never less than 1 s, so a test that shortens a long limit does not make a short one too
+  short to meet on a busy machine; with no factor, a limit is its value. Tests use it to make each limit pass in seconds
 
 ## Check
 

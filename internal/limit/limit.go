@@ -30,10 +30,11 @@ func scale() (int, error) {
 	return n, nil
 }
 
-// scaled divides a limit by the factor, but never below 1 s: on a busy machine a call needs that long
-// to be met, whatever the factor.
+// scaled divides a limit by the factor, but never below 1 s: on a busy machine a call needs that long to be
+// met. With no factor, a limit is its value.
 func scaled(d time.Duration) time.Duration {
 	n, _ := scale()
+	// With no factor, a limit is its value, whatever its size: the floor below belongs to a divided limit.
 	if n == 1 {
 		return d
 	}
