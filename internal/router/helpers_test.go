@@ -258,6 +258,30 @@ exec "{{REAL}}" "$@"
 	return &standIn{log: log}
 }
 
+// withFakePodman puts a podman on the PATH that never runs the real one: it answers enough for a make to be
+// reached, logs each call, and fails the run. A test reads the calls from s.log, so no person's router is touched.
+func withFakePodman(t *testing.T) *standIn {
+	t.Helper()
+	dir := t.TempDir()
+	log := filepath.Join(dir, "calls")
+	const raw = `#!/usr/bin/env bash
+printf '%s\n' "$*" >> "{{LOG}}"
+case "${1:-}" in
+  network) [ "${2:-}" = exists ] && exit 0; exit 1 ;;
+  container) [ "${2:-}" = exists ] && exit 1; exit 1 ;;
+  run) printf '%s\n' "fake podman: run stopped" >&2; exit 1 ;;
+esac
+exit 1
+`
+	script := strings.NewReplacer("{{LOG}}", log).Replace(raw)
+	path := filepath.Join(dir, "podman")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return &standIn{log: log}
+}
+
 // testSlice makes a slice of the test's own, and removes it when the test ends.
 func testSlice(t *testing.T) string {
 	t.Helper()

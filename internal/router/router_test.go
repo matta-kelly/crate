@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -219,6 +220,82 @@ func TestRemovalTakesTheRouteFileAndTheNetworkOff(t *testing.T) {
 		t.Errorf("Remove again: expected no error, got %v", err)
 	}
 	waitBody(t, 10*time.Second, r.port, otherWorkspace+".localhost", 200, "workspace B")
+}
+
+// A machine with no WORKSPACE_ROUTER_STATE takes its state folder from XDG_STATE_HOME/workspace-router, for
+// the route files and the router's mounts.
+func TestTheRouterDefaultsToTheXDGStateFolder(t *testing.T) {
+	r := newRig(t)
+	base := t.TempDir()
+	t.Setenv("WORKSPACE_ROUTER_STATE", "")
+	t.Setenv("XDG_STATE_HOME", base)
+	addRoutes(t, r.workspace, r.network, webAndAPI(r.workspace))
+
+	state := filepath.Join(base, "workspace-router")
+	if _, err := os.Stat(filepath.Join(state, "routes", r.workspace+".caddy")); err != nil {
+		t.Errorf("the route file under the default state folder: %v", err)
+	}
+	mounts := podman(t, "inspect", r.name, "--format", "{{range .Mounts}}{{.Destination}}={{.Source}} {{end}}")
+	for _, destination := range []string{"/etc/caddy/Caddyfile", "/etc/caddy/routes", "/data", "/config"} {
+		found := false
+		for _, entry := range strings.Fields(mounts) {
+			dst, source, ok := strings.Cut(entry, "=")
+			if ok && dst == destination {
+				found = true
+				if !strings.HasPrefix(source, state+string(os.PathSeparator)) {
+					t.Errorf("%s's source %s is not under %s", destination, source, state)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("the router's mounts lack %s: %s", destination, mounts)
+		}
+	}
+}
+
+// A machine with no WORKSPACE_ROUTER makes a router called workspace-router, without touching the real podman.
+func TestTheRouterDefaultsToTheWorkspaceRouterName(t *testing.T) {
+	r := newRig(t)
+	t.Setenv("WORKSPACE_ROUTER", "")
+	fake := withFakePodman(t)
+	if err := router.New(machine.Default()).Add(r.workspace, r.network, webAndAPI(r.workspace)); err == nil {
+		t.Fatalf("Add: expected the fake podman's run to fail")
+	}
+	found := false
+	for _, call := range fake.calls(t) {
+		if strings.HasPrefix(call, "run ") && strings.Contains(call, "--name workspace-router") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the router was not made with --name workspace-router: %q", fake.calls(t))
+	}
+}
+
+// Removing a workspace's routes where the router was never made changes nothing.
+func TestRemoveWithNoRouterChangesNothing(t *testing.T) {
+	r := newRig(t)
+	if err := router.New(machine.Default()).Remove(r.workspace, r.network); err != nil {
+		t.Fatalf("Remove with no router and no route file: expected no error, got %v", err)
+	}
+	if exec.Command(realPodman, "network", "exists", r.network).Run() != nil {
+		t.Errorf("Remove took the workspace's network away")
+	}
+}
+
+// A route file with no route gives no URL and no error.
+func TestURLsOfAWorkspaceWithNoRoutesIsEmpty(t *testing.T) {
+	r := newRig(t)
+	if err := os.MkdirAll(filepath.Join(r.state, "routes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(r.routeFile(r.workspace), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	urls, err := router.New(machine.Default()).URLs(r.workspace)
+	if err != nil || urls != nil {
+		t.Errorf("URLs of an empty route file: expected none and no error, got %v, %v", urls, err)
+	}
 }
 
 // The router is one pinned Caddy container, made once on demand, placed through the machine in its slice, with

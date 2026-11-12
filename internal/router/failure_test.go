@@ -1,6 +1,8 @@
 package router_test
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -118,7 +120,39 @@ func TestANetworkDisconnectThatFailsMakesRemoveFail(t *testing.T) {
 	}
 }
 
-// A remake that fails after the old router is gone leaves none, and the next Add makes it from the state folder.
+// A changed list whose reload keeps failing puts the old route file back, byte for byte.
+func TestAReloadThatKeepsFailingRestoresTheOldRouteFile(t *testing.T) {
+	r := newRig(t)
+	t.Setenv("CRATE_LIMIT_SCALE", "30")
+	addRoutes(t, r.workspace, r.network, webAndAPI(r.workspace))
+	old, err := os.ReadFile(r.routeFile(r.workspace))
+	if err != nil {
+		t.Fatalf("the first route file: %v", err)
+	}
+	const message = "stand-in: the router did not take its routes"
+	withPodmanStandIn(t, "reload", "always", message, 0)
+
+	err = router.New(machine.Default()).Add(r.workspace, r.network, []router.Route{
+		{Name: "web", Target: r.workspace + "-app", Port: 3001},
+		{Name: "docs", Target: r.workspace + "-app", Port: 8081},
+	})
+	if err == nil {
+		t.Fatalf("Add: expected an error when the changed list's reload keeps failing")
+	}
+	if !strings.Contains(err.Error(), message) {
+		t.Errorf("Add's error: expected Caddy's message %q, got %q", message, err)
+	}
+	now, err := os.ReadFile(r.routeFile(r.workspace))
+	if err != nil {
+		t.Fatalf("the route file after the failed add: %v", err)
+	}
+	if !bytes.Equal(old, now) {
+		t.Errorf("Add did not put the old route file back:\nold:\n%s\nnow:\n%s", old, now)
+	}
+}
+
+// A remake that fails after the old router is gone leaves none, and the next Add makes it from the state folder
+// and says so on stderr, in one crate: line.
 func TestARemakeThatFailsLeavesNoRouterAndTheNextAddMakesIt(t *testing.T) {
 	r := newRig(t)
 	startTarget(t, r.name+"-target", r.network, r.workspace+"-app", map[int]string{3000: "workspace A"})
@@ -139,8 +173,31 @@ func TestARemakeThatFailsLeavesNoRouterAndTheNextAddMakesIt(t *testing.T) {
 		t.Fatalf("a failed remake left a router")
 	}
 
-	if err := router.New(machine.Default()).Add(r.workspace, r.network, webAndAPI(r.workspace)); err != nil {
-		t.Fatalf("the next Add: %v", err)
+	oldStderr := os.Stderr
+	read, write, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatal(pipeErr)
+	}
+	os.Stderr = write
+	addErr := router.New(machine.Default()).Add(r.workspace, r.network, webAndAPI(r.workspace))
+	write.Close()
+	os.Stderr = oldStderr
+	out, readErr := io.ReadAll(read)
+	read.Close()
+	if addErr != nil {
+		t.Fatalf("the next Add: %v", addErr)
+	}
+	if readErr != nil {
+		t.Fatalf("read the next Add's stderr: %v", readErr)
+	}
+	var said []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "crate:") {
+			said = append(said, line)
+		}
+	}
+	if len(said) != 1 {
+		t.Errorf("the next Add after a failed remake: expected one crate: line on stderr, got %q", out)
 	}
 	waitBody(t, 10*time.Second, r.port, r.workspace+".localhost", 200, "workspace A")
 }
