@@ -158,16 +158,33 @@ func basePropertyFailure(base, cpus string, err error) error {
 
 // cpusetAdvice says how to delegate cpuset when the user's manager does not have it.
 func cpusetAdvice() string {
-	out, err := systemdOutput("systemctl --user show", "systemctl", "--user", "show", "--value",
-		"-p", "CGroupControllers", "-.slice")
-	if err != nil {
-		return ""
-	}
-	controllers := strings.TrimSpace(out)
-	if strings.Contains(controllers, "cpuset") {
+	controllers, ok := managerControllers()
+	if !ok || strings.Contains(controllers, "cpuset") {
 		return ""
 	}
 	return fmt.Sprintf("cpuset is not delegated to the user's manager (%s): delegate it with Delegate=cpuset", controllers)
+}
+
+// managerControllers reads the user manager's cgroup.controllers. A manager that does not expose the cgroup
+// file is asked for its DelegateControllers property instead, with the unit after -- (systemd 262 reads a bare
+// -.slice as an option).
+func managerControllers() (string, bool) {
+	uid := strconv.Itoa(os.Getuid())
+	for _, path := range []string{
+		"/sys/fs/cgroup/user.slice/user-" + uid + ".slice/user@" + uid + ".service/cgroup.controllers",
+		"/sys/fs/cgroup/user.slice/user-" + uid + ".slice/cgroup.controllers",
+	} {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return strings.TrimSpace(string(data)), true
+		}
+	}
+	out, err := systemdOutput("systemctl --user show", "systemctl", "--user", "show", "--value",
+		"-p", "DelegateControllers", "--", "-.slice")
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(out), true
 }
 
 // startSlice makes the slice and its parents. systemctl can start a slice with no unit file; an older manager
