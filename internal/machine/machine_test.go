@@ -14,8 +14,10 @@ import (
 var kinds = []string{"work", "check", "postsubmit", "attempt"}
 
 // Here the default machine places nothing and holds nothing: one system that calls Hold twice and Place three
-// times gets one slot and never waits on itself.
+// times gets one slot and never waits on itself. With no machine file, it holds nothing at all.
 func TestTheDefaultMachinePlacesNothingAndHoldsNothing(t *testing.T) {
+	t.Setenv("CRATE_MACHINE", filepath.Join(t.TempDir(), "no-machine.toml"))
+	t.Setenv("XDG_STATE_HOME", t.TempDir())
 	for _, kind := range kinds {
 		t.Run(kind, func(t *testing.T) {
 			m := machine.Default()
@@ -34,6 +36,9 @@ func TestTheDefaultMachinePlacesNothingAndHoldsNothing(t *testing.T) {
 				}
 				first.Bind()
 				second.Release()
+				if entries, err := os.ReadDir(filepath.Join(os.Getenv("XDG_STATE_HOME"), "crate", "slots")); err == nil && len(entries) > 0 {
+					t.Errorf("a machine with no file: expected no slots, got %v", entries)
+				}
 				for i := 0; i < 3; i++ {
 					if p, err := m.Place(kind, "que-pasa-main"); err != nil || p != "" {
 						t.Errorf("Place(%q) %d: expected no placement and no error, got %q, %v", kind, i+1, p, err)
@@ -53,11 +58,13 @@ func TestAKindOutsideTheFourIsAnError(t *testing.T) {
 	for _, kind := range []string{"", "bogus", "Work", "checks"} {
 		t.Run(kind, func(t *testing.T) {
 			m := machine.Default()
-			if _, err := m.Hold(kind, "s"); err == nil {
-				t.Errorf("Hold(%q): expected an error, got none", kind)
+			_, holdErr := m.Hold(kind, "s")
+			if holdErr == nil || !strings.Contains(holdErr.Error(), kind) {
+				t.Errorf("Hold(%q): expected an error that names the kind, got %v", kind, holdErr)
 			}
-			if _, err := m.Place(kind, "s"); err == nil {
-				t.Errorf("Place(%q): expected an error, got none", kind)
+			_, placeErr := m.Place(kind, "s")
+			if placeErr == nil || !strings.Contains(placeErr.Error(), kind) {
+				t.Errorf("Place(%q): expected an error that names the kind, got %v", kind, placeErr)
 			}
 		})
 	}
