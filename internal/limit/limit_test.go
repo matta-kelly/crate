@@ -27,6 +27,8 @@ func all() []struct {
 		{"Smoke", limit.Smoke, 10 * time.Minute},
 		{"Gh", limit.Gh, 5 * time.Minute},
 		{"Podman", limit.Podman, 30 * time.Second},
+		{"RouterReload", limit.RouterReload, 10 * time.Second},
+		{"RouterPodman", limit.RouterPodman, 30 * time.Second},
 		{"Check", limit.Check, 30 * time.Minute},
 		{"Hold", limit.Hold, time.Hour},
 		{"Up", limit.Up, 15 * time.Minute},
