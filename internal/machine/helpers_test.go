@@ -443,6 +443,68 @@ func (f *fixture) startHelperNoSys(mode, kind, system string, env ...string) *he
 	return h
 }
 
+// startHelperFakeCgroup runs a holder in a mount namespace where the user manager's cgroup tree is a fake
+// whose cgroup.controllers is the test's, for each uid the holder might compute. It is the manager with no
+// cpuset, or with it, as the target's cgroup file would say.
+func (f *fixture) startHelperFakeCgroup(mode, kind, system, controllers string, env ...string) *helperProc {
+	f.t.Helper()
+	root := f.t.TempDir()
+	for _, uid := range []string{"0", "1000"} {
+		dir := filepath.Join(root, "user-"+uid+".slice", "user@"+uid+".service")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			f.t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "cgroup.controllers"), []byte(controllers+"\n"), 0o644); err != nil {
+			f.t.Fatal(err)
+		}
+	}
+	dir := f.t.TempDir()
+	h := &helperProc{
+		out:     filepath.Join(dir, "out"),
+		errFile: filepath.Join(dir, "err"),
+		done:    make(chan struct{}),
+	}
+	cmd := exec.Command("unshare", "-Urm", "sh", "-c",
+		`mount --bind "$1" /sys/fs/cgroup/user.slice; shift; exec "$@"`, "sh", root, os.Args[0], "-test.run=^TestHelperProcess$")
+	errFile, err := os.Create(h.errFile)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	cmd.Stdout, cmd.Stderr = errFile, errFile
+	base := []string{
+		helperMarker + "=1",
+		"HELPER_MODE=" + mode,
+		"HELPER_KIND=" + kind,
+		"HELPER_SYSTEM=" + system,
+		"HELPER_OUT=" + h.out,
+	}
+	cmd.Env = append(os.Environ(), append(base, env...)...)
+	if err := cmd.Start(); err != nil {
+		errFile.Close()
+		f.t.Fatal(err)
+	}
+	h.cmd = cmd
+	go func() {
+		_ = cmd.Wait()
+		_ = errFile.Close()
+		close(h.done)
+	}()
+	f.t.Cleanup(func() {
+		select {
+		case <-h.done:
+			return
+		default:
+		}
+		_ = cmd.Process.Kill()
+		select {
+		case <-h.done:
+		case <-time.After(5 * time.Second):
+			f.t.Logf("the holder pid %d did not exit after a kill", cmd.Process.Pid)
+		}
+	})
+	return h
+}
+
 func (h *helperProc) stderr() string {
 	data, _ := os.ReadFile(h.errFile)
 	return string(data)

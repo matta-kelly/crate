@@ -62,30 +62,46 @@ func TestARemoteEnginePlacesNothingAndHoldsNothing(t *testing.T) {
 	}
 }
 
-// With no cpuset in the user's manager, Place refuses and says why and how to delegate it, even when the
-// manager's own message is only 'Invalid argument'.
+// faithfulManager is systemctl as systemd 262 behaves on this target: a bare -.slice is an option and is
+// rejected unless -- comes first, CGroupControllers is not exposed, and DelegateControllers is.
+func faithfulManager(log, controllers string) string {
+	return fmt.Sprintf(`#!/bin/sh
+echo "$*" >> %q
+ddash=0
+for a in "$@"; do
+	if [ "$a" = "--" ]; then ddash=1; continue; fi
+	if [ "$a" = "-.slice" ] && [ "$ddash" = 0 ]; then
+		echo "systemctl: invalid option -- '.'" >&2
+		exit 1
+	fi
+done
+case "$*" in
+*set-property*) echo "Failed to set unit properties on the slice: Invalid argument" >&2; exit 1 ;;
+*DelegateControllers*) echo %q; exit 0 ;;
+esac
+exit 0
+`, log, controllers)
+}
+
+// With no cpuset in the user's manager, Place refuses and says why and how to delegate it, from a query that
+// works on this target (the user manager's cgroup.controllers, or the exposed DelegateControllers property).
 func TestPlaceRefusesWhenTheManagerHasNoCpuset(t *testing.T) {
 	f := newFixture(t, "0", "512M", 1, 1, 1)
 	log := filepath.Join(t.TempDir(), "calls")
-	manager := fmt.Sprintf(`#!/bin/sh
-echo "$*" >> %q
-case "$*" in
-*CGroupControllers*) echo "cpu memory pids"; exit 0 ;;
-*set-property*) echo "Failed to set unit properties on the slice: Invalid argument" >&2; exit 1 ;;
-esac
-exit 0
-`, log)
+	manager := faithfulManager(log, "cpu memory pids")
 	f.pathWith(map[string]string{"systemctl": manager, "systemd-run": manager})
-	_, err := machine.Default().Place(machine.Work, f.system("a"))
-	if err == nil {
-		t.Fatalf("Place with a manager that has no cpuset: expected a refusal, got none")
+	h := f.startHelperFakeCgroup("place", machine.Work, f.system("a"), "cpu memory pids")
+	out := h.waitOut(t, 15*time.Second)
+	message, ok := strings.CutPrefix(out, "err ")
+	if !ok {
+		t.Fatalf("Place with a manager that has no cpuset: expected a refusal, got %q", out)
 	}
-	message := strings.ToLower(err.Error())
-	if !strings.Contains(message, "cpuset") {
-		t.Errorf("the refusal: expected it to say why (cpuset), got %q", err)
+	lower := strings.ToLower(message)
+	if !strings.Contains(lower, "cpuset") {
+		t.Errorf("the refusal: expected it to say why (cpuset), got %q", message)
 	}
-	if !strings.Contains(message, "delegate") {
-		t.Errorf("the refusal: expected it to say how to delegate cpuset, got %q", err)
+	if !strings.Contains(lower, "delegate") {
+		t.Errorf("the refusal: expected it to say how to delegate cpuset, got %q", message)
 	}
 	if data, _ := os.ReadFile(log); strings.Contains(string(data), "systemd-run") {
 		t.Errorf("the refusal: expected no member started, got\n%s", data)
@@ -93,18 +109,11 @@ exit 0
 }
 
 // A set-property that systemd refuses makes Place return an error that names the unit, the property and
-// systemd's message, and starts no member.
+// systemd's message, starts no member, and adds no cpuset advice when cpuset is delegated.
 func TestAFailedSystemctlAskNamesTheUnitThePropertyAndTheMessage(t *testing.T) {
 	f := newFixture(t, "0", "512M", 1, 1, 1)
 	log := filepath.Join(t.TempDir(), "calls")
-	manager := fmt.Sprintf(`#!/bin/sh
-echo "$*" >> %q
-case "$*" in
-*CGroupControllers*) echo "cpuset cpu memory pids"; exit 0 ;;
-*set-property*) echo "Failed to set unit properties on the slice: Invalid argument" >&2; exit 1 ;;
-esac
-exit 0
-`, log)
+	manager := faithfulManager(log, "cpuset cpu io memory pids")
 	f.pathWith(map[string]string{"systemctl": manager, "systemd-run": manager})
 	placement, err := machine.Default().Place(machine.Work, f.system("a"))
 	if err == nil {
@@ -118,6 +127,10 @@ exit 0
 		if !strings.Contains(message, want) {
 			t.Errorf("the error: expected it to name %q, got %q", want, message)
 		}
+	}
+	lower := strings.ToLower(message)
+	if strings.Contains(lower, "cpuset") || strings.Contains(lower, "delegate") {
+		t.Errorf("the error: expected no cpuset advice while cpuset is delegated, got %q", message)
 	}
 	if data, _ := os.ReadFile(log); strings.Contains(string(data), "systemd-run") {
 		t.Errorf("the failed ask: expected no member started, got\n%s", data)
