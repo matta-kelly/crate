@@ -1,11 +1,9 @@
 package machine
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -206,27 +204,15 @@ func processStart(pid int) (string, error) {
 }
 
 func networkExists(system string) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), limit.Podman())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "podman", "network", "exists", system)
-	var out strings.Builder
-	cmd.Stdout, cmd.Stderr = &out, &out
-	err := cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
-		return false, fmt.Errorf("podman network exists %s did not finish within %v", system, limit.Podman())
-	}
+	_, err := runTool("podman network exists "+system, limit.Podman(), os.Environ(), "podman", "network", "exists", system)
 	if err == nil {
 		return true, nil
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+	var failed *toolError
+	if errors.As(err, &failed) && failed.code == 1 {
 		return false, nil
 	}
-	msg := strings.TrimSpace(out.String())
-	if msg == "" {
-		msg = err.Error()
-	}
-	return false, fmt.Errorf("podman network exists %s: %s", system, msg)
+	return false, err
 }
 
 func lockFolder(path string, wait time.Duration) (func(), error) {

@@ -2,6 +2,7 @@ package machine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,10 +14,9 @@ import (
 	"github.com/matta-kelly/crate/internal/limit"
 )
 
-// ceiling is a machine file's ceiling, placed in the user's systemd under the slice CRATE_SLICE names.
+// ceiling is the machine file's order, placed in the user's systemd under the slice CRATE_SLICE names.
 type ceiling struct {
 	cfg   *Config
-	path  string
 	slice string
 }
 
@@ -24,17 +24,9 @@ func (m *ceiling) Place(kind, system string) (Placement, error) {
 	if err := CheckKind(kind); err != nil {
 		return "", err
 	}
-	if err := checkCPUs(m.path, m.cfg.CPUs); err != nil {
-		return "", err
-	}
-	base := m.slice + ".slice"
 	leaf := m.leaf(kind, system)
 	if err := startSlice(leaf); err != nil {
-		return "", managerFailure(err)
-	}
-	if err := systemd("systemctl --user set-property", "systemctl", "--user", "set-property", "--runtime", base,
-		"AllowedCPUs="+m.cfg.CPUs, "MemoryMax="+memoryBytes(m.cfg.Memory), "MemorySwapMax=0"); err != nil {
-		return "", basePropertyFailure(base, m.cfg.CPUs, err)
+		return "", err
 	}
 	kindSlice := m.slice + "-" + kind + ".slice"
 	if err := systemd("systemctl --user set-property", "systemctl", "--user", "set-property", "--runtime",
@@ -75,109 +67,6 @@ func escapeSystem(system string) string {
 	return b.String()
 }
 
-func memoryBytes(memory string) string {
-	n, err := strconv.ParseInt(memory[:len(memory)-1], 10, 64)
-	if err != nil {
-		return memory
-	}
-	switch memory[len(memory)-1] {
-	case 'K':
-		n *= 1024
-	case 'M':
-		n *= 1024 * 1024
-	case 'G':
-		n *= 1024 * 1024 * 1024
-	}
-	return strconv.FormatInt(n, 10)
-}
-
-// checkCPUs refuses a CPU the machine cannot have, so a slice never gets an empty cpuset from a bad file.
-func checkCPUs(machineFile, spec string) error {
-	data, err := os.ReadFile(possibleCPUs)
-	if err != nil {
-		return fmt.Errorf("machine file %s: cpus = %q: %s: %w", machineFile, spec, possibleCPUs, err)
-	}
-	possibleText := strings.TrimSpace(string(data))
-	possible, err := cpuRanges(possibleText)
-	if err != nil {
-		return fmt.Errorf("machine file %s: cpus = %q: %s = %q: not a CPU list", machineFile, spec, possibleCPUs, possibleText)
-	}
-	wanted, err := cpuRanges(spec)
-	if err != nil {
-		return fmt.Errorf("machine file %s: cpus = %q: not a CPU list", machineFile, spec)
-	}
-	for _, span := range wanted {
-		for cpu := span[0]; cpu <= span[1]; cpu++ {
-			if !inRanges(possible, cpu) {
-				return fmt.Errorf("machine file %s: cpus = %q: CPU %d is not one the machine has (%s)",
-					machineFile, spec, cpu, possibleText)
-			}
-		}
-	}
-	return nil
-}
-
-const possibleCPUs = "/sys/devices/system/cpu/possible"
-
-func cpuRanges(spec string) ([][2]int, error) {
-	var ranges [][2]int
-	for _, part := range strings.Split(spec, ",") {
-		loText, hiText, hasRange := strings.Cut(part, "-")
-		lo, err := strconv.Atoi(loText)
-		if err != nil {
-			return nil, err
-		}
-		hi := lo
-		if hasRange {
-			if hi, err = strconv.Atoi(hiText); err != nil {
-				return nil, err
-			}
-		}
-		ranges = append(ranges, [2]int{lo, hi})
-	}
-	return ranges, nil
-}
-
-func inRanges(ranges [][2]int, cpu int) bool {
-	for _, span := range ranges {
-		if cpu >= span[0] && cpu <= span[1] {
-			return true
-		}
-	}
-	return false
-}
-
-// basePropertyFailure adds the way to delegate cpuset when that is why the manager's set-property failed.
-func basePropertyFailure(base, cpus string, err error) error {
-	advice := cpusetAdvice()
-	if advice != "" {
-		return fmt.Errorf("the machine's slice %s: AllowedCPUs=%s: %s: %w", base, cpus, advice, err)
-	}
-	return fmt.Errorf("the machine's slice %s: AllowedCPUs=%s: %w", base, cpus, err)
-}
-
-// cpusetAdvice says how to delegate cpuset when the user's manager does not have it.
-func cpusetAdvice() string {
-	controllers, ok := managerControllers()
-	if !ok || strings.Contains(controllers, "cpuset") {
-		return ""
-	}
-	return fmt.Sprintf("cpuset is not delegated to the user's manager (%s): delegate it with Delegate=cpuset", controllers)
-}
-
-// managerControllers reads the user manager's cgroup.controllers. That file is the controllers the manager has,
-// not the unit's explicit Delegate= list. A file the process cannot read gives no answer, so the set-property
-// error stands on its own.
-func managerControllers() (string, bool) {
-	uid := strconv.Itoa(os.Getuid())
-	path := "/sys/fs/cgroup/user.slice/user-" + uid + ".slice/user@" + uid + ".service/cgroup.controllers"
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", false
-	}
-	return strings.TrimSpace(string(data)), true
-}
-
 // startSlice makes the slice and its parents. systemctl can start a slice with no unit file; an older manager
 // that cannot is given a short scope in the slice instead.
 func startSlice(leaf string) error {
@@ -192,27 +81,35 @@ func startSlice(leaf string) error {
 	return err
 }
 
-// managerFailure says how to bring the user's manager up when the call could not reach it.
-func managerFailure(err error) error {
-	msg := strings.ToLower(err.Error())
-	if strings.Contains(msg, "failed to connect to bus") || strings.Contains(msg, "no medium found") ||
-		strings.Contains(msg, "connection refused") || strings.Contains(msg, "no such file or directory") {
-		return fmt.Errorf("%w: the user's manager is not running; the user needs linger (loginctl enable-linger)", err)
-	}
-	return err
-}
-
-// systemd runs one systemd call with its limit. Its error holds the call's name and systemd's own message.
+// systemd runs one systemd call with its limit.
 func systemd(name string, args ...string) error {
-	_, err := systemdOutput(name, args...)
+	_, err := runTool(name, limit.Systemd(), managerEnv(), args...)
 	return err
 }
 
-func systemdOutput(name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), limit.Systemd())
+// toolError is one failed call: the name it goes by, the tool's message and its exit code. The code lets a
+// caller tell a plain no from a failure; the name and the message are the whole of the error's text.
+type toolError struct {
+	name    string
+	msg     string
+	code    int
+	timeout time.Duration
+}
+
+func (e *toolError) Error() string {
+	if e.timeout > 0 {
+		return fmt.Sprintf("%s did not finish within %v", e.name, e.timeout)
+	}
+	return fmt.Sprintf("%s: %s", e.name, e.msg)
+}
+
+// runTool is the one home of every systemctl, systemd-run and podman call. It ends the call's whole process
+// group at its limit, and its error names the call and holds the tool's message.
+func runTool(name string, within time.Duration, env []string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), within)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Env = managerEnv()
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
@@ -220,14 +117,19 @@ func systemdOutput(name string, args ...string) (string, error) {
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return "", fmt.Errorf("%s did not finish within %v", name, limit.Systemd())
+		return "", &toolError{name: name, timeout: within}
 	}
 	if err != nil {
 		msg := strings.TrimSpace(out.String())
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", fmt.Errorf("%s: %s", name, msg)
+		code := -1
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			code = exit.ExitCode()
+		}
+		return "", &toolError{name: name, msg: msg, code: code}
 	}
 	return out.String(), nil
 }

@@ -1,5 +1,6 @@
-// Package machine is the seam between crate and the machine it runs on: what a system may take of it, and
-// the file that says what the machine has. Here the default machine places nothing and holds nothing.
+// Package machine is the seam between crate and the machine it runs on: the slice each kind of crate's
+// work goes in, and the file that says how many of a kind may run. Here the default machine orders the work
+// in the user's systemd and keeps the slots.
 package machine
 
 import (
@@ -47,16 +48,18 @@ type Machine interface {
 	Place(kind, system string) (Placement, error)
 }
 
-type noCeiling struct{}
+// noMachine is a machine crate places nothing on: a remote engine's, or one with no machine file. It still
+// refuses a kind outside the four.
+type noMachine struct{}
 
-func (noCeiling) Hold(kind, system string) (Slot, error) {
+func (noMachine) Hold(kind, system string) (Slot, error) {
 	if err := CheckKind(kind); err != nil {
 		return nil, err
 	}
 	return noSlot{}, nil
 }
 
-func (noCeiling) Place(kind, system string) (Placement, error) { return "", CheckKind(kind) }
+func (noMachine) Place(kind, system string) (Placement, error) { return "", CheckKind(kind) }
 
 type noSlot struct{}
 
@@ -80,23 +83,21 @@ func (f failing) Place(kind, system string) (Placement, error) {
 }
 
 // Default is the machine of this user and machine file. The machine's slice is CRATE_SLICE, or crate when the
-// environment names none. A machine with no file or behind a remote engine has no ceiling: it places nothing
-// and holds nothing.
+// environment names none. A machine with no file or behind a remote engine places nothing and holds nothing.
 func Default() Machine {
 	if os.Getenv("CONTAINER_HOST") != "" {
-		return noCeiling{}
+		return noMachine{}
 	}
-	path := Path()
-	cfg, err := Read(path)
+	cfg, err := Read(Path())
 	if err != nil {
 		return failing{err: err}
 	}
 	if cfg == nil {
-		return noCeiling{}
+		return noMachine{}
 	}
 	slice := os.Getenv("CRATE_SLICE")
 	if slice == "" {
 		slice = "crate"
 	}
-	return &ceiling{cfg: cfg, path: path, slice: slice}
+	return &ceiling{cfg: cfg, slice: slice}
 }

@@ -113,13 +113,12 @@ line that starts `crate:`. Exit 2 is a usage error, 1 a failure.
   fail on it. Any other answer is a failure for every verb, and nothing is built or pushed on it
 - the engine: `podman` and `skopeo` from the PATH, with the registry login they read. `CONTAINER_HOST` may name a remote
   engine. The smoke mounts the checkout, so the checkout's path must be the same on the engine's host
-- the machine: `/etc/crate/machine.toml` (`CRATE_MACHINE` names another) gives a ceiling. It is placed in the user's
-  systemd under the slice `CRATE_SLICE` names (crate by default): the machine's slice takes `AllowedCPUs`, `MemoryMax`
-  and `MemorySwapMax=0`, and each kind's slice takes a `CPUWeight` that puts a person's work first, a check next, and
-  postsubmit and attempts last. A `cpus` list outside `/sys/devices/system/cpu/possible` is refused with the file,
-  the key and the CPUs the machine has, before systemd is asked. With no file, crate places nothing and a build says
-  once on stderr that the machine has no ceiling. With `CONTAINER_HOST`, the engine is remote, so crate places nothing
-  and says so once
+- the machine: `/etc/crate/machine.toml` (`CRATE_MACHINE` names another) gives the order and the counts. Its work is
+  placed in the user's systemd under the slice `CRATE_SLICE` names (crate by default): each kind's slice takes a
+  `CPUWeight` that puts a person's work first, a check next, and postsubmit and attempts last. crate sets no CPU or
+  memory limit of its own, so the machine's ceiling is root's, on `user.slice`. A file that still holds the old `cpus`
+  and `memory` is read and their values are dropped. With no file, crate places nothing and a build says once on
+  stderr that it places nothing. With `CONTAINER_HOST`, the engine is remote, so crate places nothing and says so once
 - the slots: a system holds one slot of a kind for the places it makes. Each slot is a file under
   `$XDG_STATE_HOME/crate/slots/<kind>/` that names the system and the process holding it. A check, postsubmit or
   attempt waits past its count in `[count]`; work has no count. A slot is freed by `Release`, by the holder leaving

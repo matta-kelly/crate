@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"regexp"
 
 	"github.com/pelletier/go-toml/v2"
 )
@@ -31,18 +30,12 @@ type Count struct {
 
 // Config is the machine file.
 type Config struct {
-	CPUs   string
-	Memory string
-	Count  Count
+	Count Count
 }
 
-var (
-	cpuList = regexp.MustCompile(`^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$`)
-	memory  = regexp.MustCompile(`^[0-9]+[KMG]$`)
-)
-
 // Read reads the machine file at path. A path with no file gives nil and no error. A file that cannot be
-// read, parsed or accepted is an error that names the file and the key.
+// read, parsed or accepted is an error that names the file and the key. A file that still holds the old
+// cpus and memory is read and their values dropped: the machine's ceiling belongs to root.
 func Read(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -60,12 +53,6 @@ func Read(path string) (*Config, error) {
 		return nil, fmt.Errorf("machine file %s: %w", path, err)
 	}
 	cfg := &Config{}
-	if cfg.CPUs, err = text("cpus", raw.CPUs, cpuList); err != nil {
-		return nil, fmt.Errorf("machine file %s: %w", path, err)
-	}
-	if cfg.Memory, err = text("memory", raw.Memory, memory); err != nil {
-		return nil, fmt.Errorf("machine file %s: %w", path, err)
-	}
 	for key, dst := range map[string]*int{"check": &cfg.Count.Check, "postsubmit": &cfg.Count.Postsubmit, "attempt": &cfg.Count.Attempt} {
 		if *dst, err = number(key, raw.Count[key]); err != nil {
 			return nil, fmt.Errorf("machine file %s: %w", path, err)
@@ -77,14 +64,6 @@ func Read(path string) (*Config, error) {
 		}
 	}
 	return cfg, nil
-}
-
-func text(key string, v any, form *regexp.Regexp) (string, error) {
-	s, ok := v.(string)
-	if !ok || !form.MatchString(s) {
-		return "", fmt.Errorf("%s = %v: not a form crate reads", key, v)
-	}
-	return s, nil
 }
 
 func number(key string, v any) (int, error) {
