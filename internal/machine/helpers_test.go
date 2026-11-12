@@ -1,8 +1,9 @@
 package machine_test
 
-// The fixture of the machine tests: a machine file, a slice name and a state folder of the test's own, on
-// real podman and the user's systemd. A test starts containers through the placement `machine.Default()`
-// gives and cleans up its units, containers and networks.
+// The fixture of the machine tests: a [count] file, a slice name and a state folder of the test's own, on
+// real podman and the user's systemd. A test acts on the machine through a helper process of its own, under
+// the environment the fixture names, so the tests run in parallel. Each test removes its units, containers
+// and networks.
 
 import (
 	"crypto/rand"
@@ -23,9 +24,12 @@ import (
 // testImage is the pinned alpine the shell tests also use: a container that needs no network to start.
 const testImage = "docker.io/library/alpine@sha256:0f49f331d9212aff11b932863be4eb01cdf962969aa86dab7d1ee21ac6f5f52b"
 
-// helperMarker is set only in a process the test starts to hold a slot, so TestHelperProcess returns at once
-// when the test runner calls it as an ordinary test.
+// helperMarker is set only in a process the test starts to act on the machine, so TestHelperProcess returns
+// at once when the test runner calls it as an ordinary test.
 const helperMarker = "CRATE_MACHINE_TEST_HELPER"
+
+// scaleFast divides every limit to a second, so a call that should not wait fails within the test's reach.
+const scaleFast = "CRATE_LIMIT_SCALE=3600"
 
 type fixture struct {
 	t          *testing.T
@@ -33,13 +37,15 @@ type fixture struct {
 	tag        string
 	state      string
 	machine    string
+	env        []string
 	containers []string
 	networks   []string
 }
 
-// newFixture writes a machine file and names a slice, a state folder and a tag of the test's own.
-func newFixture(t *testing.T, cpus, memory string, check, postsubmit, attempt int) *fixture {
+// newFixture writes a [count] file and names a slice, a state folder and a tag of the test's own.
+func newFixture(t *testing.T, check, postsubmit, attempt int) *fixture {
 	t.Helper()
+	t.Parallel()
 	dir := t.TempDir()
 	f := &fixture{
 		t:       t,
@@ -51,14 +57,15 @@ func newFixture(t *testing.T, cpus, memory string, check, postsubmit, attempt in
 	if err := os.MkdirAll(f.state, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	body := fmt.Sprintf("cpus = %q\nmemory = %q\n\n[count]\ncheck = %d\npostsubmit = %d\nattempt = %d\n",
-		cpus, memory, check, postsubmit, attempt)
+	body := fmt.Sprintf("[count]\ncheck = %d\npostsubmit = %d\nattempt = %d\n", check, postsubmit, attempt)
 	if err := os.WriteFile(f.machine, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("CRATE_MACHINE", f.machine)
-	t.Setenv("CRATE_SLICE", f.slice)
-	t.Setenv("XDG_STATE_HOME", f.state)
+	f.env = append(os.Environ(),
+		"CRATE_MACHINE="+f.machine,
+		"CRATE_SLICE="+f.slice,
+		"XDG_STATE_HOME="+f.state,
+	)
 	t.Cleanup(f.cleanup)
 	return f
 }
@@ -74,6 +81,12 @@ func randomHex(t *testing.T) string {
 
 // system is a system name of the test's own, so no two tests share a slot or a network.
 func (f *fixture) system(label string) string { return "sys-" + label + "-" + f.tag }
+
+// plainSystem is a system name with nothing systemd escapes, so its slice's path is its name.
+func (f *fixture) plainSystem(label string) string { return "sys" + label + f.tag }
+
+// absent is a path that is never there, for a holder that waits until the test kills it.
+func (f *fixture) absent() string { return filepath.Join(f.t.TempDir(), "never") }
 
 func (f *fixture) cleanup() {
 	for _, c := range f.containers {
@@ -125,17 +138,17 @@ func (f *fixture) run(name string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// place asks the machine for a placement and fails when it gives none: every fixture declares a ceiling.
-func (f *fixture) place(kind, system string) machine.Placement {
+// place asks the machine for a placement, through a process of its own, and fails when it gives none.
+func (f *fixture) place(kind, system string, extra ...string) machine.Placement {
 	f.t.Helper()
-	p, err := machine.Default().Place(kind, system)
-	if err != nil {
-		f.t.Fatalf("Place(%q, %q): %v", kind, system, err)
+	h := f.startHelper("place", kind, system, extra...)
+	out := h.waitOut(f.t, 30*time.Second)
+	h.waitExit(f.t, 30*time.Second)
+	placement, ok := strings.CutPrefix(out, "ok ")
+	if !ok {
+		f.t.Fatalf("Place(%q, %q): %q", kind, system, out)
 	}
-	if p == "" {
-		f.t.Fatalf("Place(%q, %q) gave no slice, but the machine file declares a ceiling", kind, system)
-	}
-	return p
+	return machine.Placement(placement)
 }
 
 // start runs a container with `--cgroup-parent=` the placement the machine gives, and returns its name.
@@ -152,9 +165,10 @@ func (f *fixture) start(kind, system string, opts, command []string) (string, ma
 	return name, leaf
 }
 
-// burn returns a container command with more threads than the CPU set of the fixture (two CPUs).
-func burn() []string {
-	return []string{"sh", "-c", "i=0; while [ $i -lt 8 ]; do (while :; do :; done) & i=$((i+1)); done; wait"}
+// burn is a container command with more threads than the machine has CPUs.
+func burn(threads int) []string {
+	return []string{"sh", "-c", fmt.Sprintf(
+		"i=0; while [ $i -lt %d ]; do (while :; do :; done) & i=$((i+1)); done; wait", threads)}
 }
 
 func (f *fixture) pid(name string) int {
@@ -218,37 +232,9 @@ func cpuAt(t *testing.T, dir string) int64 {
 	return 0
 }
 
-// cgroupField is one small file of a cgroup folder, first line only.
-func cgroupField(t *testing.T, dir, name string) string {
-	t.Helper()
-	data, err := os.ReadFile(filepath.Join(dir, name))
-	if os.IsNotExist(err) {
-		return ""
-	}
-	if err != nil {
-		t.Fatalf("reading %s/%s: %v", dir, name, err)
-	}
-	return strings.TrimSpace(strings.SplitN(string(data), "\n", 2)[0])
-}
-
 func (f *fixture) running(name string) bool {
 	f.t.Helper()
 	return f.run("podman", "inspect", "-f", "{{.State.Running}}", name) == "true"
-}
-
-func (f *fixture) oomKilled(name string) bool {
-	f.t.Helper()
-	return f.run("podman", "inspect", "-f", "{{.State.OOMKilled}}", name) == "true"
-}
-
-// base is the cgroup folder of the machine's own slice.
-func (f *fixture) base() string {
-	f.t.Helper()
-	cg := f.run("systemctl", "--user", "show", f.slice+".slice", "-p", "ControlGroup", "--value")
-	if cg == "" {
-		f.t.Fatalf("the machine's slice %s.slice has no cgroup", f.slice)
-	}
-	return "/sys/fs/cgroup" + cg
 }
 
 // show reads properties of a user unit.
@@ -284,7 +270,7 @@ func (f *fixture) slotFiles(kind string) []string {
 	}
 	var files []string
 	for _, e := range entries {
-		if !e.IsDir() {
+		if !e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
 			files = append(files, filepath.Join(f.slotDir(kind), e.Name()))
 		}
 	}
@@ -300,8 +286,8 @@ func (f *fixture) oneSlot(kind string) string {
 	return files[0]
 }
 
-// pathWith puts stand-in programs first on PATH for this test.
-func (f *fixture) pathWith(scripts map[string]string) {
+// pathWith puts stand-in programs first on PATH for a helper process.
+func (f *fixture) pathWith(scripts map[string]string) []string {
 	f.t.Helper()
 	dir := f.t.TempDir()
 	for name, body := range scripts {
@@ -309,10 +295,10 @@ func (f *fixture) pathWith(scripts map[string]string) {
 			f.t.Fatal(err)
 		}
 	}
-	f.t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	return []string{"PATH=" + dir + string(os.PathListSeparator) + os.Getenv("PATH")}
 }
 
-// --- the holder process ---
+// --- the helper process ---
 
 type helperProc struct {
 	cmd     *exec.Cmd
@@ -321,29 +307,30 @@ type helperProc struct {
 	done    chan struct{}
 }
 
-// startHelper runs this test binary as a process that calls the machine, so a slot is held by a process of
-// its own, as a system is.
-func (f *fixture) startHelper(mode, kind, system string, env ...string) *helperProc {
+func (f *fixture) startHelper(mode, kind, system string, extra ...string) *helperProc {
 	f.t.Helper()
-	return f.startHelperEnv(os.Environ(), mode, kind, system, env...)
+	return f.startHelperEnv(f.env, mode, kind, system, extra...)
 }
 
-// startHelperBare is a holder with an environment of its own, as a git hook's process has: no session bus
-// and no runtime folder, unless the test names them.
-func (f *fixture) startHelperBare(mode, kind, system string, env ...string) *helperProc {
+// hookHelper is a holder with the environment a git hook's process has: no runtime folder and no session bus.
+func (f *fixture) hookHelper(mode, kind, system string, extra ...string) *helperProc {
 	f.t.Helper()
-	base := []string{
-		"PATH=" + os.Getenv("PATH"),
-		"HOME=" + os.Getenv("HOME"),
-		"TMPDIR=" + os.TempDir(),
-		"CRATE_MACHINE=" + f.machine,
-		"CRATE_SLICE=" + f.slice,
-		"XDG_STATE_HOME=" + f.state,
+	var base []string
+	for _, e := range f.env {
+		if strings.HasPrefix(e, "XDG_RUNTIME_DIR=") || strings.HasPrefix(e, "DBUS_SESSION_BUS_ADDRESS=") {
+			continue
+		}
+		base = append(base, e)
 	}
-	return f.startHelperEnv(base, mode, kind, system, env...)
+	for _, e := range extra {
+		if strings.HasPrefix(e, "XDG_RUNTIME_DIR=") || strings.HasPrefix(e, "DBUS_SESSION_BUS_ADDRESS=") {
+			f.t.Fatalf("a hook's environment has no %s", e)
+		}
+	}
+	return f.startHelperEnv(base, mode, kind, system, extra...)
 }
 
-func (f *fixture) startHelperEnv(baseEnv []string, mode, kind, system string, env ...string) *helperProc {
+func (f *fixture) startHelperEnv(baseEnv []string, mode, kind, system string, extra ...string) *helperProc {
 	f.t.Helper()
 	dir := f.t.TempDir()
 	h := &helperProc{
@@ -364,121 +351,7 @@ func (f *fixture) startHelperEnv(baseEnv []string, mode, kind, system string, en
 		"HELPER_SYSTEM=" + system,
 		"HELPER_OUT=" + h.out,
 	}
-	cmd.Env = append(baseEnv, append(base, env...)...)
-	if err := cmd.Start(); err != nil {
-		errFile.Close()
-		f.t.Fatal(err)
-	}
-	h.cmd = cmd
-	go func() {
-		_ = cmd.Wait()
-		_ = errFile.Close()
-		close(h.done)
-	}()
-	f.t.Cleanup(func() {
-		select {
-		case <-h.done:
-			return
-		default:
-		}
-		_ = cmd.Process.Kill()
-		select {
-		case <-h.done:
-		case <-time.After(5 * time.Second):
-			f.t.Logf("the holder pid %d did not exit after a kill", cmd.Process.Pid)
-		}
-	})
-	return h
-}
-
-// startHelperNoSys runs a holder in a mount namespace where /sys is an empty folder, so the CPU list it
-// reads cannot be read.
-func (f *fixture) startHelperNoSys(mode, kind, system string, env ...string) *helperProc {
-	f.t.Helper()
-	hidden := f.t.TempDir()
-	dir := f.t.TempDir()
-	h := &helperProc{
-		out:     filepath.Join(dir, "out"),
-		errFile: filepath.Join(dir, "err"),
-		done:    make(chan struct{}),
-	}
-	cmd := exec.Command("unshare", "-Urm", "sh", "-c",
-		`mount --bind "$1" /sys; shift; exec "$@"`, "sh", hidden, os.Args[0], "-test.run=^TestHelperProcess$")
-	errFile, err := os.Create(h.errFile)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	cmd.Stdout, cmd.Stderr = errFile, errFile
-	base := []string{
-		helperMarker + "=1",
-		"HELPER_MODE=" + mode,
-		"HELPER_KIND=" + kind,
-		"HELPER_SYSTEM=" + system,
-		"HELPER_OUT=" + h.out,
-	}
-	cmd.Env = append(os.Environ(), append(base, env...)...)
-	if err := cmd.Start(); err != nil {
-		errFile.Close()
-		f.t.Fatal(err)
-	}
-	h.cmd = cmd
-	go func() {
-		_ = cmd.Wait()
-		_ = errFile.Close()
-		close(h.done)
-	}()
-	f.t.Cleanup(func() {
-		select {
-		case <-h.done:
-			return
-		default:
-		}
-		_ = cmd.Process.Kill()
-		select {
-		case <-h.done:
-		case <-time.After(5 * time.Second):
-			f.t.Logf("the holder pid %d did not exit after a kill", cmd.Process.Pid)
-		}
-	})
-	return h
-}
-
-// startHelperFakeCgroup runs a holder in a mount namespace where the user manager's cgroup tree is a fake
-// whose cgroup.controllers is the test's, for each uid the holder might compute. It is the manager with no
-// cpuset, or with it, as the target's cgroup file would say.
-func (f *fixture) startHelperFakeCgroup(mode, kind, system, controllers string, env ...string) *helperProc {
-	f.t.Helper()
-	root := f.t.TempDir()
-	for _, uid := range []string{"0", "1000"} {
-		dir := filepath.Join(root, "user-"+uid+".slice", "user@"+uid+".service")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			f.t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "cgroup.controllers"), []byte(controllers+"\n"), 0o644); err != nil {
-			f.t.Fatal(err)
-		}
-	}
-	dir := f.t.TempDir()
-	h := &helperProc{
-		out:     filepath.Join(dir, "out"),
-		errFile: filepath.Join(dir, "err"),
-		done:    make(chan struct{}),
-	}
-	cmd := exec.Command("unshare", "-Urm", "sh", "-c",
-		`mount --bind "$1" /sys/fs/cgroup/user.slice; shift; exec "$@"`, "sh", root, os.Args[0], "-test.run=^TestHelperProcess$")
-	errFile, err := os.Create(h.errFile)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	cmd.Stdout, cmd.Stderr = errFile, errFile
-	base := []string{
-		helperMarker + "=1",
-		"HELPER_MODE=" + mode,
-		"HELPER_KIND=" + kind,
-		"HELPER_SYSTEM=" + system,
-		"HELPER_OUT=" + h.out,
-	}
-	cmd.Env = append(os.Environ(), append(base, env...)...)
+	cmd.Env = append(baseEnv, append(base, extra...)...)
 	if err := cmd.Start(); err != nil {
 		errFile.Close()
 		f.t.Fatal(err)
@@ -532,7 +405,7 @@ func (h *helperProc) waitExit(t *testing.T, timeout time.Duration) {
 	}
 }
 
-// outTime is the moment a holder wrote its answer.
+// outTime is the moment a holder wrote its answer: `ok <nanos>`.
 func outTime(t *testing.T, out string) time.Time {
 	t.Helper()
 	field, ok := strings.CutPrefix(out, "ok ")
@@ -544,6 +417,46 @@ func outTime(t *testing.T, out string) time.Time {
 		t.Fatalf("the holder's answer %q: %v", out, err)
 	}
 	return time.Unix(0, n)
+}
+
+// outMillis is how long a holder took at its own work: `ok <millis>`.
+func outMillis(t *testing.T, out string) int64 {
+	t.Helper()
+	field, ok := strings.CutPrefix(out, "ok ")
+	if !ok {
+		t.Fatalf("the holder's answer: expected `ok <millis>`, got %q", out)
+	}
+	n, err := strconv.ParseInt(field, 10, 64)
+	if err != nil {
+		t.Fatalf("the holder's answer %q: %v", out, err)
+	}
+	return n
+}
+
+// noneOut is a holder that placed once and held three times: `ok <millis> place="<placement>"`.
+func noneOut(t *testing.T, out string) (int64, machine.Placement) {
+	t.Helper()
+	fields := strings.Fields(out)
+	if len(fields) != 3 || fields[0] != "ok" {
+		t.Fatalf("the holder's answer: expected `ok <millis> place=<placement>`, got %q", out)
+	}
+	n, err := strconv.ParseInt(fields[1], 10, 64)
+	if err != nil {
+		t.Fatalf("the holder's answer %q: %v", out, err)
+	}
+	placement, ok := strings.CutPrefix(fields[2], `place="`)
+	if !ok || !strings.HasSuffix(placement, `"`) {
+		t.Fatalf("the holder's answer %q: expected a place=<placement>", out)
+	}
+	return n, machine.Placement(strings.TrimSuffix(placement, `"`))
+}
+
+// requireHeld says a holder's answer is a hold, and fails the test when it is an error.
+func requireHeld(t *testing.T, out, what string) {
+	t.Helper()
+	if !strings.HasPrefix(out, "ok ") {
+		t.Fatalf("%s: expected it to hold, got %q", what, out)
+	}
 }
 
 func writeFile(t *testing.T, path string) {
@@ -582,20 +495,21 @@ func TestHelperProcess(t *testing.T) {
 			time.Sleep(10 * time.Millisecond)
 		}
 	}
+	fail := func(err error) { write("err " + err.Error()); os.Exit(0) }
 	network := os.Getenv("HELPER_NETWORK")
 	m := machine.Default()
 	switch mode {
 	case "place":
 		p, err := m.Place(kind, system)
 		if err != nil {
-			write("err " + err.Error())
+			fail(err)
 		} else {
 			write("ok " + string(p))
 		}
 	case "hold":
 		s, err := m.Hold(kind, system)
 		if err != nil {
-			write("err " + err.Error())
+			fail(err)
 			break
 		}
 		write(fmt.Sprintf("ok %d", time.Now().UnixNano()))
@@ -604,11 +518,11 @@ func TestHelperProcess(t *testing.T) {
 	case "hold-bind":
 		s, err := m.Hold(kind, system)
 		if err != nil {
-			write("err " + err.Error())
+			fail(err)
 			break
 		}
 		if out, err := exec.Command("podman", "network", "create", network).CombinedOutput(); err != nil {
-			write(fmt.Sprintf("err network create: %v\n%s", err, out))
+			fail(fmt.Errorf("network create: %v\n%s", err, out))
 			break
 		}
 		s.Bind()
@@ -618,31 +532,67 @@ func TestHelperProcess(t *testing.T) {
 	case "hold-bind-exit":
 		s, err := m.Hold(kind, system)
 		if err != nil {
-			write("err " + err.Error())
+			fail(err)
 			break
 		}
 		if out, err := exec.Command("podman", "network", "create", network).CombinedOutput(); err != nil {
-			write(fmt.Sprintf("err network create: %v\n%s", err, out))
+			fail(fmt.Errorf("network create: %v\n%s", err, out))
 			break
 		}
 		s.Bind()
 		write(fmt.Sprintf("ok %d", time.Now().UnixNano()))
-	case "hold-then-bind":
-		s, err := m.Hold(kind, system)
+	case "one":
+		started := time.Now()
+		first, err := m.Hold(kind, system)
 		if err != nil {
-			write("err " + err.Error())
+			fail(err)
 			break
 		}
-		write(fmt.Sprintf("ok %d", time.Now().UnixNano()))
-		wait(os.Getenv("HELPER_BIND_AT"))
-		if out, err := exec.Command("podman", "network", "create", network).CombinedOutput(); err != nil {
-			write(fmt.Sprintf("err network create: %v\n%s", err, out))
+		for _, k := range []string{machine.Work, machine.Check, machine.Work} {
+			if _, err := m.Place(k, system); err != nil {
+				fail(err)
+				break
+			}
+		}
+		second, err := m.Hold(kind, system)
+		if err != nil {
+			fail(err)
 			break
 		}
-		s.Bind()
-		writeFile(t, os.Getenv("HELPER_BOUND_AT"))
+		write(fmt.Sprintf("ok %d", time.Since(started).Milliseconds()))
 		wait(os.Getenv("HELPER_RELEASE"))
-		s.Release()
+		first.Release()
+		second.Release()
+	case "work-holds":
+		started := time.Now()
+		var slots []machine.Slot
+		for _, sys := range strings.Split(os.Getenv("HELPER_SYSTEMS"), ",") {
+			s, err := m.Hold(machine.Work, sys)
+			if err != nil {
+				fail(err)
+				break
+			}
+			slots = append(slots, s)
+		}
+		write(fmt.Sprintf("ok %d", time.Since(started).Milliseconds()))
+		wait(os.Getenv("HELPER_RELEASE"))
+		for _, s := range slots {
+			s.Release()
+		}
+	case "none":
+		started := time.Now()
+		p, err := m.Place(kind, system)
+		if err != nil {
+			fail(err)
+			break
+		}
+		for _, sys := range strings.Split(os.Getenv("HELPER_SYSTEMS"), ",") {
+			if _, err := m.Hold(machine.Check, sys); err != nil {
+				fail(err)
+				break
+			}
+		}
+		write(fmt.Sprintf("ok %d place=%q", time.Since(started).Milliseconds(), string(p)))
 	}
 	os.Exit(0)
 }

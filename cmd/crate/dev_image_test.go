@@ -900,26 +900,29 @@ func TestARemoteEngineNeedsOnlyPodmanAndSkopeoOnThePath(t *testing.T) {
 
 // --- the machine seam ---
 
-func TestAMachineWithNoFileSaysOnceThatItHasNoCeiling(t *testing.T) {
+func TestAMachineWithNoFileSaysOnceThatItPlacesNothing(t *testing.T) {
 	f := newFx(t, "que-pasa")
-	local := f.dev(nil, "local")
-	if n := count(local.err, "no ceiling"); n != 1 {
-		t.Errorf("local that builds: expected stderr to say once that this machine has no ceiling, said %d times: %q", n, local.err)
+	local := f.dev(nil, "ensure")
+	if n := reasonLineCount(local.err); n != 1 {
+		t.Errorf("ensure that builds: expected stderr to say once that this machine places nothing, said %d times: %q", n, local.err)
 	}
-	if hash := f.dev(nil, "hash"); strings.Contains(hash.err, "no ceiling") {
-		t.Errorf("hash starts no container: expected no word of a ceiling, got %q", hash.err)
+	if hash := f.dev(nil, "hash"); reasonLineCount(hash.err) != 0 {
+		t.Errorf("hash starts no container: expected no word of the machine, got %q", hash.err)
 	}
 }
 
-func TestAMachineWithAFileNeverSaysItHasNoCeiling(t *testing.T) {
+func TestAMachineWithAFilePlacesTheBuildUnderItsSlice(t *testing.T) {
 	f := newFx(t, "que-pasa")
 	slice := testSliceName()
 	stopUserSlices(t, slice)
 	file := filepath.Join(f.dir, "machine.toml")
-	must(t, os.WriteFile(file, []byte("cpus = \"0-1\"\nmemory = \"512M\"\n\n[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"), 0o644))
+	must(t, os.WriteFile(file, []byte("[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"), 0o644))
 	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice, "PATH=" + realSystemdPATH(t, f.bin)}, "local")
-	if r.code != 0 || strings.Contains(r.err, "no ceiling") {
-		t.Errorf("local that builds, with a machine file: expected exit 0 and no word of a ceiling, got %s", r)
+	if r.code != 0 {
+		t.Errorf("local that builds, with a machine file: expected exit 0, got %s", r)
+	}
+	if want := "--cgroup-parent=" + slice; !strings.Contains(f.calls(), want) {
+		t.Errorf("the build: expected it placed with %q, got\n%s", want, f.calls())
 	}
 }
 

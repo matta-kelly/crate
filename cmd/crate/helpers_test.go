@@ -393,11 +393,15 @@ func (r result) String() string {
 }
 
 // hasReasonLine says some line of stderr starts with `crate:`.
-func hasReasonLine(stderr string) bool {
+func hasReasonLine(stderr string) bool { return reasonLineCount(stderr) > 0 }
+
+// reasonLineCount is how many lines of stderr start with `crate:`.
+func reasonLineCount(stderr string) int {
+	n := 0
 	for _, l := range lines(stderr) {
 		if strings.HasPrefix(l, "crate:") {
-			return true
+			n++
 		}
 	}
-	return false
+	return n
 }
