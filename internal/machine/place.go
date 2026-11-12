@@ -165,26 +165,17 @@ func cpusetAdvice() string {
 	return fmt.Sprintf("cpuset is not delegated to the user's manager (%s): delegate it with Delegate=cpuset", controllers)
 }
 
-// managerControllers reads the user manager's cgroup.controllers. A manager that does not expose the cgroup
-// file is asked for its DelegateControllers property instead, with the unit after -- (systemd 262 reads a bare
-// -.slice as an option).
+// managerControllers reads the user manager's cgroup.controllers. That file is the controllers the manager has,
+// not the unit's explicit Delegate= list. A file the process cannot read gives no answer, so the set-property
+// error stands on its own.
 func managerControllers() (string, bool) {
 	uid := strconv.Itoa(os.Getuid())
-	for _, path := range []string{
-		"/sys/fs/cgroup/user.slice/user-" + uid + ".slice/user@" + uid + ".service/cgroup.controllers",
-		"/sys/fs/cgroup/user.slice/user-" + uid + ".slice/cgroup.controllers",
-	} {
-		data, err := os.ReadFile(path)
-		if err == nil {
-			return strings.TrimSpace(string(data)), true
-		}
-	}
-	out, err := systemdOutput("systemctl --user show", "systemctl", "--user", "show", "--value",
-		"-p", "DelegateControllers", "--", "-.slice")
+	path := "/sys/fs/cgroup/user.slice/user-" + uid + ".slice/user@" + uid + ".service/cgroup.controllers"
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", false
 	}
-	return strings.TrimSpace(out), true
+	return strings.TrimSpace(string(data)), true
 }
 
 // startSlice makes the slice and its parents. systemctl can start a slice with no unit file; an older manager
