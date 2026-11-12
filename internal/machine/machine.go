@@ -86,7 +86,8 @@ func Default() Machine {
 	if os.Getenv("CONTAINER_HOST") != "" {
 		return noCeiling{}
 	}
-	cfg, err := Read(Path())
+	path := Path()
+	cfg, err := Read(path)
 	if err != nil {
 		return failing{err: err}
 	}
@@ -97,5 +98,5 @@ func Default() Machine {
 	if slice == "" {
 		slice = "crate"
 	}
-	return &ceiling{cfg: cfg, slice: slice}
+	return &ceiling{cfg: cfg, path: path, slice: slice}
 }

@@ -16,6 +16,7 @@ import (
 // ceiling is a machine file's ceiling, placed in the user's systemd under the slice CRATE_SLICE names.
 type ceiling struct {
 	cfg   *Config
+	path  string
 	slice string
 }
 
@@ -23,17 +24,17 @@ func (m *ceiling) Place(kind, system string) (Placement, error) {
 	if err := CheckKind(kind); err != nil {
 		return "", err
 	}
-	base := m.slice + ".slice"
-	if err := checkCPUs(m.cfg.CPUs); err != nil {
-		return "", fmt.Errorf("the machine's slice %s: AllowedCPUs=%s: %w", base, m.cfg.CPUs, err)
+	if err := checkCPUs(m.path, m.cfg.CPUs); err != nil {
+		return "", err
 	}
+	base := m.slice + ".slice"
 	leaf := m.leaf(kind, system)
 	if err := startSlice(leaf); err != nil {
 		return "", managerFailure(err)
 	}
 	if err := systemd("systemctl --user set-property", "systemctl", "--user", "set-property", "--runtime", base,
 		"AllowedCPUs="+m.cfg.CPUs, "MemoryMax="+memoryBytes(m.cfg.Memory), "MemorySwapMax=0"); err != nil {
-		return "", fmt.Errorf("the machine's slice %s: AllowedCPUs=%s: %w", base, m.cfg.CPUs, err)
+		return "", basePropertyFailure(base, m.cfg.CPUs, err)
 	}
 	kindSlice := m.slice + "-" + kind + ".slice"
 	if err := systemd("systemctl --user set-property", "systemctl", "--user", "set-property", "--runtime",
@@ -91,28 +92,32 @@ func memoryBytes(memory string) string {
 }
 
 // checkCPUs refuses a CPU the machine cannot have, so a slice never gets an empty cpuset from a bad file.
-func checkCPUs(spec string) error {
-	data, err := os.ReadFile("/sys/devices/system/cpu/possible")
+func checkCPUs(machineFile, spec string) error {
+	data, err := os.ReadFile(possibleCPUs)
 	if err != nil {
-		return nil
+		return fmt.Errorf("machine file %s: cpus = %q: %s: %w", machineFile, spec, possibleCPUs, err)
 	}
-	possible, err := cpuRanges(strings.TrimSpace(string(data)))
+	possibleText := strings.TrimSpace(string(data))
+	possible, err := cpuRanges(possibleText)
 	if err != nil {
-		return nil
+		return fmt.Errorf("machine file %s: cpus = %q: %s = %q: not a CPU list", machineFile, spec, possibleCPUs, possibleText)
 	}
 	wanted, err := cpuRanges(spec)
 	if err != nil {
-		return fmt.Errorf("invalid CPU list %q", spec)
+		return fmt.Errorf("machine file %s: cpus = %q: not a CPU list", machineFile, spec)
 	}
 	for _, span := range wanted {
 		for cpu := span[0]; cpu <= span[1]; cpu++ {
 			if !inRanges(possible, cpu) {
-				return fmt.Errorf("invalid CPU %d: this machine has %s", cpu, strings.TrimSpace(string(data)))
+				return fmt.Errorf("machine file %s: cpus = %q: CPU %d is not one the machine has (%s)",
+					machineFile, spec, cpu, possibleText)
 			}
 		}
 	}
 	return nil
 }
+
+const possibleCPUs = "/sys/devices/system/cpu/possible"
 
 func cpuRanges(spec string) ([][2]int, error) {
 	var ranges [][2]int
@@ -142,6 +147,29 @@ func inRanges(ranges [][2]int, cpu int) bool {
 	return false
 }
 
+// basePropertyFailure adds the way to delegate cpuset when that is why the manager's set-property failed.
+func basePropertyFailure(base, cpus string, err error) error {
+	advice := cpusetAdvice()
+	if advice != "" {
+		return fmt.Errorf("the machine's slice %s: AllowedCPUs=%s: %s: %w", base, cpus, advice, err)
+	}
+	return fmt.Errorf("the machine's slice %s: AllowedCPUs=%s: %w", base, cpus, err)
+}
+
+// cpusetAdvice says how to delegate cpuset when the user's manager does not have it.
+func cpusetAdvice() string {
+	out, err := systemdOutput("systemctl --user show", "systemctl", "--user", "show", "--value",
+		"-p", "CGroupControllers", "-.slice")
+	if err != nil {
+		return ""
+	}
+	controllers := strings.TrimSpace(out)
+	if strings.Contains(controllers, "cpuset") {
+		return ""
+	}
+	return fmt.Sprintf("cpuset is not delegated to the user's manager (%s): delegate it with Delegate=cpuset", controllers)
+}
+
 // startSlice makes the slice and its parents. systemctl can start a slice with no unit file; an older manager
 // that cannot is given a short scope in the slice instead.
 func startSlice(leaf string) error {
@@ -168,6 +196,11 @@ func managerFailure(err error) error {
 
 // systemd runs one systemd call with its limit. Its error holds the call's name and systemd's own message.
 func systemd(name string, args ...string) error {
+	_, err := systemdOutput(name, args...)
+	return err
+}
+
+func systemdOutput(name string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), limit.Systemd())
 	defer cancel()
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
@@ -179,16 +212,16 @@ func systemd(name string, args ...string) error {
 	cmd.Stdout, cmd.Stderr = &out, &out
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("%s did not finish within %v", name, limit.Systemd())
+		return "", fmt.Errorf("%s did not finish within %v", name, limit.Systemd())
 	}
 	if err != nil {
 		msg := strings.TrimSpace(out.String())
 		if msg == "" {
 			msg = err.Error()
 		}
-		return fmt.Errorf("%s: %s", name, msg)
+		return "", fmt.Errorf("%s: %s", name, msg)
 	}
-	return nil
+	return out.String(), nil
 }
 
 // managerEnv is the process's environment with the user's runtime folder and bus named when a hook left them out.
