@@ -43,24 +43,55 @@ func TestEachLimitHasItsValueWhenTheScaleIsUnset(t *testing.T) {
 	}
 }
 
-func TestTheScaleDividesEveryLimit(t *testing.T) {
+// floored is a value divided by a factor, never less than 1 s
+func floored(d, div time.Duration) time.Duration {
+	if d/div < time.Second {
+		return time.Second
+	}
+	return d / div
+}
+
+// the value a limit has at a factor: Image is the sum of the three limits it holds, each divided and floored
+func wantAt(name string, want, div time.Duration) time.Duration {
+	if name == "Image" {
+		return floored(15*time.Minute, div) + floored(30*time.Minute, div) + floored(10*time.Minute, div)
+	}
+	return floored(want, div)
+}
+
+func TestTheScaleDividesEveryLimitAndNoneIsLessThanOneSecond(t *testing.T) {
+	// 900 and 3600 reach the floor for the 30 s limits; 1000000 reaches it for every limit
 	for _, scale := range []struct {
 		env string
 		div time.Duration
-	}{{"1", 1}, {"5", 5}, {"30", 30}, {"3600", 3600}} {
+	}{{"1", 1}, {"5", 5}, {"30", 30}, {"900", 900}, {"3600", 3600}, {"1000000", 1000000}} {
 		t.Run(scale.env, func(t *testing.T) {
 			t.Setenv("CRATE_LIMIT_SCALE", scale.env)
 			for _, l := range all() {
-				if got, want := l.get(), l.want/scale.div; got != want {
+				got := l.get()
+				if want := wantAt(l.name, l.want, scale.div); got != want {
 					t.Errorf("%s at scale %s: expected %v, got %v", l.name, scale.env, want, got)
+				}
+				if got < time.Second {
+					t.Errorf("%s at scale %s: expected at least 1s, got %v", l.name, scale.env, got)
 				}
 			}
 		})
 	}
 }
 
+func TestAtAScaleOf900PushIsOneSecondAndSkopeoInspectIsToo(t *testing.T) {
+	t.Setenv("CRATE_LIMIT_SCALE", "900")
+	if got := limit.Push(); got != time.Second {
+		t.Errorf("Push: expected 1s, got %v", got)
+	}
+	if got := limit.SkopeoInspect(); got != time.Second {
+		t.Errorf("SkopeoInspect: expected 1s, not 33ms, got %v", got)
+	}
+}
+
 func TestImageIsPullPlusBuildPlusSmokeAtAnyScale(t *testing.T) {
-	for _, s := range []string{"1", "5", "30"} {
+	for _, s := range []string{"1", "5", "30", "3600", "1000000"} {
 		t.Setenv("CRATE_LIMIT_SCALE", s)
 		if got, want := limit.Image(), limit.Pull()+limit.Build()+limit.Smoke(); got != want || got == 0 {
 			t.Errorf("scale %s: expected Image %v to be Pull+Build+Smoke, got %v", s, want, got)
