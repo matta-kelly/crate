@@ -15,7 +15,7 @@ func TestAVolumeIsTheSystemAndTheFoldersSlug(t *testing.T) {
 		{"que-pasa-work", "node_modules", "que-pasa-work-node-modules"},
 		{"que-pasa-work", ".venv", "que-pasa-work-venv"},
 		{"que-pasa-work", ".next", "que-pasa-work-next"},
-		{"que-pasa-work", "node_modules/.cache", "que-pasa-work-node-modules---cache"},
+		{"que-pasa-work", "node_modules/.cache", "que-pasa-work-node-modules--cache"},
 		{"que-pasa-work", "packages/web/node_modules", "que-pasa-work-packages-web-node-modules"},
 		{"a", "..env", "a-env"},
 	}

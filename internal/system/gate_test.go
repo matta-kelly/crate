@@ -175,7 +175,7 @@ func podmanWrapper(t *testing.T, fail string, once bool) {
 	} else {
 		guard = fmt.Sprintf("echo %q >&2; exit 125", "podman "+fail+" exploded")
 	}
-	body := fmt.Sprintf("#!/bin/sh\nif [ \"$1 $2\" = %q ]; then\n  %s\nfi\nexec %q \"$@\"\n", fail, guard, real)
+	body := fmt.Sprintf("#!/bin/sh\ncase \"$1 $2\" in\n%s)\n  %s\n  ;;\nesac\nexec %q \"$@\"\n", fmt.Sprintf("%q*", fail), guard, real)
 	if err := os.WriteFile(filepath.Join(dir, "podman"), []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}

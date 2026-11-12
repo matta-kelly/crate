@@ -68,8 +68,8 @@ spec:
   restartPolicy: Never
   containers:
     - name: postgres
-      image: docker.io/library/alpine
-      command: ["sh", "-c", "echo service-up; mkdir -p /tmp/site; echo ok >/tmp/site/index.html; exec httpd -f -p 5432 -h /tmp/site"]
+      image: docker.io/library/busybox:latest
+      command: ["sh", "-c", "echo service-up; echo ok >/tmp/index.html; exec httpd -f -p 5432 -h /tmp"]
   volumes:
     - name: WORKSPACE-pgdata
       emptyDir: {}
@@ -139,7 +139,6 @@ func (w *ws) run(cwd string, args ...string) (result, error) {
 	cmd.Dir = cwd
 	cmd.Env = append(filterEnv(os.Environ(), "CRATE_MACHINE", "CONTAINER_HOST", "CRATE_LIMIT_SCALE"),
 		"PATH="+os.Getenv("PATH"),
-		"HOME="+filepath.Join(w.dir, "home"),
 		"CRATE_MACHINE="+filepath.Join(w.dir, "no-machine.toml"))
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

@@ -141,8 +141,8 @@ spec:
   restartPolicy: Never
   containers:
     - name: postgres
-      image: docker.io/library/alpine
-      command: ["sh", "-c", "echo service-up; mkdir -p /tmp/site; echo ok >/tmp/site/index.html; exec httpd -f -p 5432 -h /tmp/site"]
+      image: docker.io/library/busybox:latest
+      command: ["sh", "-c", "echo service-up; echo ok >/tmp/index.html; exec httpd -f -p 5432 -h /tmp"]
       volumeMounts:
         - {name: WORKSPACE-pgdata, mountPath: /var/lib/postgresql/data}
   volumes:
@@ -477,7 +477,7 @@ func vetted(w *world, format string) string {
 // A setup with && runs in the tools member, as node, in the checkout's root; what it writes in a volume is
 // there after up, and its output went to the caller.
 func TestSetupRunsInTheToolsMemberAndItsMarkStays(t *testing.T) {
-	w := newWorld(t, worldOpts{Kind: system.Work, Setup: "echo setup-output && mkdir -p node_modules && echo made > node_modules/mark && pwd > node_modules/pwd && id -un > node_modules/user"})
+	w := newWorld(t, worldOpts{Kind: system.Work, Setup: "echo setup-output && mkdir -p node_modules && echo made > node_modules/mark && pwd > node_modules/pwd && id -u > node_modules/user"})
 	w.up()
 
 	if got := w.mustRun("cat", "node_modules/mark"); strings.TrimSpace(got) != "made" {
@@ -486,8 +486,8 @@ func TestSetupRunsInTheToolsMemberAndItsMarkStays(t *testing.T) {
 	if got := w.mustRun("cat", "node_modules/pwd"); strings.TrimSpace(got) != w.root {
 		t.Errorf("setup's folder: expected %q, got %q", w.root, strings.TrimSpace(got))
 	}
-	if got := w.mustRun("cat", "node_modules/user"); strings.TrimSpace(got) != "1000" && strings.TrimSpace(got) != "node" {
-		t.Errorf("setup's user: expected node or 1000, got %q", strings.TrimSpace(got))
+	if got := w.mustRun("cat", "node_modules/user"); strings.TrimSpace(got) != "1000" {
+		t.Errorf("setup's user: expected 1000, got %q", strings.TrimSpace(got))
 	}
 	if !strings.Contains(w.out.String(), "setup-output") {
 		t.Errorf("up's output: expected the setup's output, got %q", w.out.String())
