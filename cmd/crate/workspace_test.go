@@ -272,6 +272,7 @@ func TestANameThatIsNoDNSLabelIsRefused(t *testing.T) {
 // crate run passes every word as argv, its flags among them, runs in the caller's folder inside the checkout
 // and the checkout's root outside it, gives the command's exit, and makes the workspace first.
 func TestRunPassesEveryWordAsArgv(t *testing.T) {
+	t.Parallel()
 	w := newWs(t, "")
 	// no up: run makes the workspace first.
 	r := w.mustRun(w.root, "run", "sh", "-c", `echo "$1"`, "x", "-h")
@@ -305,6 +306,7 @@ func TestRunPassesEveryWordAsArgv(t *testing.T) {
 // -C as from inside. Up twice changes nothing, a stopped member starts again, an attempt in a checkout whose
 // workspace is up is refused, and down leaves nothing.
 func TestTheWorkspaceVerbsAndDashC(t *testing.T) {
+	t.Parallel()
 	w := newWs(t, "")
 	away := t.TempDir()
 	w.mustRun(away, "-C", w.root, "up")

@@ -43,6 +43,7 @@ type worldOpts struct {
 	Slice    string            // the recorder's placement
 	Keep     []string
 	BadVolumes bool // [tools] volumes is a string, not a list
+	NoDevImage bool // leave the dev image off the machine, so Image pulls and builds
 }
 
 type world struct {
@@ -105,7 +106,11 @@ inputs = [".devcontainer/Containerfile", "package-lock.json"]
 
 %s`, strconv.Quote(w.name), services, tools))
 	w.write(".devcontainer/Containerfile", "FROM "+alpine+"\n")
-	w.write("package-lock.json", "lock\n")
+	lock := "lock\n"
+	if o.NoDevImage {
+		lock = "lock " + w.name + "\n" // a tag no other test made, so Image pulls and builds
+	}
+	w.write("package-lock.json", lock)
 	w.write("src/README.md", "readme\n")
 	if o.Services {
 		w.write(".devcontainer/pod.yaml", servicesFile())
@@ -113,7 +118,9 @@ inputs = [".devcontainer/Containerfile", "package-lock.json"]
 	w.git("init", "-q", "-b", "main")
 	w.git("add", "-A")
 	w.git("commit", "-qm", "init")
-	w.tagDevImage()
+	if !o.NoDevImage {
+		w.tagDevImage()
+	}
 	w.rec = &machinetest.Recorder{Slice: o.Slice}
 	w.sys = system.New(w.rec, system.Spec{
 		Kind:     o.Kind,
@@ -314,6 +321,7 @@ func (w *world) serviceIP(service string) string {
 
 // A [tools] volumes that is not a list is refused, and names the key.
 func TestAVolumesThatIsNotAListIsRefused(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Work, BadVolumes: true})
 	if err := w.sys.Hold(); err != nil {
 		t.Fatalf("Hold: %v", err)
@@ -331,6 +339,7 @@ func TestAVolumesThatIsNotAListIsRefused(t *testing.T) {
 
 // A repo with no [tools] still gets the node_modules volume, and a [tools] env value reaches the member.
 func TestNoToolsStillGetsNodeModulesAndToolsEnvReachesTheMember(t *testing.T) {
+	t.Parallel()
 	t.Run("no [tools]", func(t *testing.T) {
 		w := newWorld(t, worldOpts{Kind: system.Work, NoTools: true})
 		w.up()
@@ -351,6 +360,7 @@ func TestNoToolsStillGetsNodeModulesAndToolsEnvReachesTheMember(t *testing.T) {
 // Two checkouts of one repo each reach their own postgres by name, and neither reaches the other's by name or
 // address. Each has its own <system>-pgdata, and down removes each.
 func TestWorkspacesReachTheirOwnServicesAndNotAnothers(t *testing.T) {
+	t.Parallel()
 	a := newWorld(t, worldOpts{Kind: system.Work, Services: true})
 	b := newWorld(t, worldOpts{Kind: system.Work, Services: true})
 	a.up()
@@ -394,6 +404,7 @@ func TestWorkspacesReachTheirOwnServicesAndNotAnothers(t *testing.T) {
 // A running workspace's services are made again: their pod is new, and the tools member, with the same start
 // time, reaches them by the same name.
 func TestServicesAreMadeAgainUnderTheSameMember(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Work, Services: true})
 	w.up()
 	oldPod := w.podmanOK("pod", "inspect", w.name+"-postgres", "--format", "{{.Id}}")
@@ -421,6 +432,7 @@ func TestServicesAreMadeAgainUnderTheSameMember(t *testing.T) {
 // An attempt reaches its own services, no address outside, and no other workspace by name or address; its
 // network is internal, so it has no route.
 func TestAnAttemptReachesItsServicesAndNothingOutside(t *testing.T) {
+	t.Parallel()
 	a := newWorld(t, worldOpts{Kind: system.Attempt, Services: true})
 	b := newWorld(t, worldOpts{Kind: system.Work, Services: true})
 	a.up()
@@ -453,6 +465,7 @@ func TestAnAttemptReachesItsServicesAndNothingOutside(t *testing.T) {
 
 // The system's network is the system's name with isolate strict; a check reaches the outside.
 func TestACheckReachesTheOutsideOnAStrictNetwork(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Check, Services: true})
 	w.up()
 
@@ -477,6 +490,7 @@ func vetted(w *world, format string) string {
 // A setup with && runs in the tools member, as node, in the checkout's root; what it writes in a volume is
 // there after up, and its output went to the caller.
 func TestSetupRunsInTheToolsMemberAndItsMarkStays(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Work, Setup: "echo setup-output && mkdir -p node_modules && echo made > node_modules/mark && pwd > node_modules/pwd && id -u > node_modules/user"})
 	w.up()
 
@@ -496,6 +510,7 @@ func TestSetupRunsInTheToolsMemberAndItsMarkStays(t *testing.T) {
 
 // A setup that fails makes up fail with its output and leaves no member, network or service of the system.
 func TestAFailedSetupFailsUpAndLeavesNothing(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Work, Services: true, Setup: "echo boom >&2; exit 3"})
 	if err := w.sys.Hold(); err != nil {
 		t.Fatalf("Hold: %v", err)
@@ -553,13 +568,17 @@ func TestRunRunsTheArgvUntouched(t *testing.T) {
 
 // Each member's output is readable by its name while the system lives.
 func TestLogsShowsEachMembersOutput(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Work, Services: true, Setup: "echo from-setup"})
 	w.up()
 	// make the service print, and wait for its line to be there.
 	w.mustRun("wget", "-qO-", "http://postgres:5432/")
+	// the tools member's own stdout: its main process writes nothing, so write a line to it.
+	w.mustRun("sh", "-c", "echo tools-line > /proc/1/fd/1")
 
 	rows := []struct{ member, want string }{
 		{"postgres", "service-up"},
+		{"tools", "tools-line"},
 	}
 	for _, row := range rows {
 		var out bytes.Buffer
@@ -571,10 +590,6 @@ func TestLogsShowsEachMembersOutput(t *testing.T) {
 			t.Errorf("Logs(%q): expected %q, got %q", row.member, row.want, out.String())
 		}
 	}
-	var tools bytes.Buffer
-	if err := w.sys.Logs("tools", &tools); err != nil {
-		t.Errorf("Logs(tools): expected the member, got %v", err)
-	}
 }
 
 // --- down and up twice ---
@@ -582,6 +597,7 @@ func TestLogsShowsEachMembersOutput(t *testing.T) {
 // Up twice changes nothing, and a stopped member is started again. Down leaves no container, pod, volume or
 // network, and a second down changes nothing.
 func TestUpTwiceChangesNothingAndDownLeavesNothing(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Work, Services: true})
 	w.up()
 	firstTools := w.podmanOK("inspect", w.name+"-tools", "--format", "{{.Id}}")
@@ -619,6 +635,7 @@ func TestUpTwiceChangesNothingAndDownLeavesNothing(t *testing.T) {
 
 // The record: up's output, every step's and every failure's, goes to the caller.
 func TestDownPutsItsOutputToTheCaller(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Work, Setup: "echo setup-line"})
 	w.up()
 	if !strings.Contains(w.out.String(), "setup-line") {
@@ -630,6 +647,48 @@ func TestDownPutsItsOutputToTheCaller(t *testing.T) {
 	}
 	if len(w.out.String()) == before {
 		t.Errorf("down's output: expected a step's line, got nothing past %q", w.out.String())
+	}
+}
+
+// --- placement ---
+
+// ownSlice makes a slice of this test's own and keeps it alive for the test, then removes it.
+func ownSlice(t *testing.T) string {
+	t.Helper()
+	name := fmt.Sprintf("crate-test-%d-%d.slice", os.Getpid(), serial.Add(1))
+	unit := strings.TrimSuffix(name, ".slice")
+	out, err := exec.Command("systemd-run", "--user", "--slice="+name, "--unit="+unit, "sleep", "300").CombinedOutput()
+	if err != nil {
+		t.Fatalf("systemd-run --user --slice=%s: %v\n%s", name, err, out)
+	}
+	t.Cleanup(func() { _ = exec.Command("systemctl", "--user", "stop", unit+".service").Run() })
+	return name
+}
+
+// A Recorder set to a slice of the test's own puts each member and each service under it: a member by
+// --cgroup-parent, a service by kube play in a scope in the slice.
+func TestAPlacementPutsMembersAndServicesUnderTheSlice(t *testing.T) {
+	t.Parallel()
+	slice := ownSlice(t)
+	w := newWorld(t, worldOpts{Kind: system.Check, Services: true, Setup: "true", Slice: slice})
+	w.up()
+
+	rows := []struct{ name, what string }{
+		{w.name + "-tools", "the tools member"},
+		{w.name + "-postgres-postgres", "the service"},
+	}
+	for _, row := range rows {
+		pid := strings.TrimSpace(w.podmanOK("inspect", row.name, "--format", "{{.State.Pid}}"))
+		if pid == "" || pid == "0" {
+			t.Fatalf("%s: expected a running process, got pid %q", row.what, pid)
+		}
+		data, err := os.ReadFile(filepath.Join("/proc", pid, "cgroup"))
+		if err != nil {
+			t.Fatalf("%s: /proc/%s/cgroup: %v", row.what, pid, err)
+		}
+		if !strings.Contains(string(data), slice) {
+			t.Errorf("%s: expected its cgroup under %s, got %q", row.what, slice, string(data))
+		}
 	}
 }
 

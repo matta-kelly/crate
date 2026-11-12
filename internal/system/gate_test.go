@@ -20,6 +20,7 @@ import (
 // env value, and the volumes to keep. Remove keeps the named volume with what the setup wrote, and leaves no
 // container, pod, network or service volume. The same for postsubmit.
 func TestTheGatesCaseThroughTheAPI(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{system.Check, system.Postsubmit} {
 		t.Run(kind, func(t *testing.T) {
 			mount := t.TempDir()
@@ -67,6 +68,7 @@ func TestTheGatesCaseThroughTheAPI(t *testing.T) {
 
 // Up with a ctx that ends during setup says it ran past its limit and leaves nothing but the kept volumes.
 func TestUpPastItsLimitLeavesOnlyTheKeptVolumes(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{
 		Kind:     system.Work,
 		Services: true,
@@ -96,6 +98,7 @@ func TestUpPastItsLimitLeavesOnlyTheKeptVolumes(t *testing.T) {
 // The seam: one Hold before the first Place, one Bind after the network and before the first service or
 // member, a Place for each member, each service and the build, and a Release only on Remove.
 func TestTheSeamHoldsBindsAndPlaces(t *testing.T) {
+	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Check, Services: true, Setup: "true"})
 	w.up()
 
@@ -213,10 +216,15 @@ func TestAFailedAskFailsUpAndLeavesNothing(t *testing.T) {
 	}
 }
 
-// A second Up of the same name after a kill leaves no member of the first.
+// A second Up of the same name after a kill leaves no member of the first, and keeps the volume the caller
+// names with what the first left in it.
 func TestASecondUpAfterAKillLeavesNoMemberOfTheFirst(t *testing.T) {
-	w := newWorld(t, worldOpts{Kind: system.Check, Services: true, Setup: "true"})
+	t.Parallel()
+	name := fmt.Sprintf("cratetest-%d-%d", os.Getpid(), serial.Add(1))
+	keep := name + "-node-modules"
+	w := newWorld(t, worldOpts{Kind: system.Check, Name: name, Services: true, Setup: "true", Keep: []string{keep}})
 	w.up()
+	w.mustRun("sh", "-c", "echo kept > node_modules/keepmark")
 	old := w.podmanOK("inspect", w.name+"-tools", "--format", "{{.Id}}")
 	w.podmanOK("kill", w.name+"-tools")
 
@@ -225,6 +233,10 @@ func TestASecondUpAfterAKillLeavesNoMemberOfTheFirst(t *testing.T) {
 	if err := w.sys.Up(ctx); err != nil {
 		t.Fatalf("Up after a kill: expected the system again, got %v", err)
 	}
+	if got := w.mustRun("cat", "node_modules/keepmark"); strings.TrimSpace(got) != "kept" {
+		t.Errorf("the kept volume: expected the mark the first left, got %q", got)
+	}
+	w.podmanOK("volume", "inspect", keep)
 	if got := w.podmanOK("inspect", w.name+"-tools", "--format", "{{.Id}}"); got == old {
 		t.Errorf("the tools member: expected a new one, still %s", old)
 	}
@@ -233,6 +245,44 @@ func TestASecondUpAfterAKillLeavesNoMemberOfTheFirst(t *testing.T) {
 	}
 	if _, err := w.podman("container", "exists", old); err == nil {
 		t.Errorf("the first member %s: expected it gone", old)
+	}
+}
+
+// A failed Image returns the call's error, leaves the slot held, and Remove makes the one Release.
+func TestAFailedImageReturnsItsCallErrorAndKeepsTheSlotUntilRemove(t *testing.T) {
+	w := newWorld(t, worldOpts{Kind: system.Check, NoDevImage: true, Setup: "true"})
+	podmanWrapper(t, "build", false)
+	if err := w.sys.Hold(); err != nil {
+		t.Fatalf("Hold: %v", err)
+	}
+	places := 0
+	err := w.sys.Image()
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "build") {
+		t.Fatalf("Image with a failed build: expected the call's error, got %v", err)
+	}
+	for _, c := range w.rec.Calls {
+		if c.Op == "Place" {
+			places++
+		}
+	}
+	if !strings.Contains(w.out.String(), "exploded") {
+		t.Errorf("Image's output: expected the call's own message, got %q", w.out.String())
+	}
+	if places == 0 {
+		t.Errorf("Image: expected a Place before the build, got %+v", w.rec.Calls)
+	}
+	before := len(w.rec.Calls)
+	if err := w.sys.Remove(nil); err != nil {
+		t.Fatalf("Remove after a failed Image: %v", err)
+	}
+	releases := 0
+	for _, c := range w.rec.Calls[before:] {
+		if c.Op == "Release" {
+			releases++
+		}
+	}
+	if releases != 1 {
+		t.Errorf("Remove after a failed Image: expected one Release, got %d: %+v", releases, w.rec.Calls[before:])
 	}
 }
 
