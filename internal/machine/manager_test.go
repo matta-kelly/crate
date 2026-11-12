@@ -62,33 +62,24 @@ func TestARemoteEnginePlacesNothingAndHoldsNothing(t *testing.T) {
 	}
 }
 
-// faithfulManager is systemctl as systemd 262 behaves on this target: a bare -.slice is an option and is
-// rejected unless -- comes first, CGroupControllers is not exposed, and DelegateControllers is.
-func faithfulManager(log, controllers string) string {
+// faithfulManager is a stand-in systemctl: it logs each call and fails set-property with the message systemd
+// gives on this target. cpuset is read from the user manager's cgroup.controllers, not through systemctl.
+func faithfulManager(log string) string {
 	return fmt.Sprintf(`#!/bin/sh
 echo "$*" >> %q
-ddash=0
-for a in "$@"; do
-	if [ "$a" = "--" ]; then ddash=1; continue; fi
-	if [ "$a" = "-.slice" ] && [ "$ddash" = 0 ]; then
-		echo "systemctl: invalid option -- '.'" >&2
-		exit 1
-	fi
-done
 case "$*" in
 *set-property*) echo "Failed to set unit properties on the slice: Invalid argument" >&2; exit 1 ;;
-*DelegateControllers*) echo %q; exit 0 ;;
 esac
 exit 0
-`, log, controllers)
+`, log)
 }
 
-// With no cpuset in the user's manager, Place refuses and says why and how to delegate it, from a query that
-// works on this target (the user manager's cgroup.controllers, or the exposed DelegateControllers property).
+// With no cpuset in the user's manager's cgroup.controllers, Place refuses and says why and how to delegate
+// it.
 func TestPlaceRefusesWhenTheManagerHasNoCpuset(t *testing.T) {
 	f := newFixture(t, "0", "512M", 1, 1, 1)
 	log := filepath.Join(t.TempDir(), "calls")
-	manager := faithfulManager(log, "cpu memory pids")
+	manager := faithfulManager(log)
 	f.pathWith(map[string]string{"systemctl": manager, "systemd-run": manager})
 	h := f.startHelperFakeCgroup("place", machine.Work, f.system("a"), "cpu memory pids")
 	out := h.waitOut(t, 15*time.Second)
@@ -113,7 +104,7 @@ func TestPlaceRefusesWhenTheManagerHasNoCpuset(t *testing.T) {
 func TestAFailedSystemctlAskNamesTheUnitThePropertyAndTheMessage(t *testing.T) {
 	f := newFixture(t, "0", "512M", 1, 1, 1)
 	log := filepath.Join(t.TempDir(), "calls")
-	manager := faithfulManager(log, "cpuset cpu io memory pids")
+	manager := faithfulManager(log)
 	f.pathWith(map[string]string{"systemctl": manager, "systemd-run": manager})
 	placement, err := machine.Default().Place(machine.Work, f.system("a"))
 	if err == nil {
