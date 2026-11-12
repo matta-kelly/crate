@@ -34,12 +34,21 @@ func (e usageError) Error() string { return "usage: " + string(e) }
 
 func usagef(format string, a ...any) error { return usageError(fmt.Sprintf(format, a...)) }
 
+// commandExit is a run whose command exited with code: crate exits with the same code, and says nothing.
+type commandExit int
+
+func (e commandExit) Error() string { return fmt.Sprintf("the command exited %d", int(e)) }
+
 func main() { os.Exit(run(os.Args[1:])) }
 
 func run(args []string) int {
 	err := dispatch(args)
 	if err == nil {
 		return 0
+	}
+	var exit commandExit
+	if errors.As(err, &exit) {
+		return int(exit)
 	}
 	fmt.Fprintf(os.Stderr, "crate: %v\n", err)
 	var usage usageError

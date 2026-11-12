@@ -119,7 +119,43 @@ line that starts `crate:`. Exit 2 is a usage error, 1 a failure.
   but a limit so divided is never less than 1 s, so a test that shortens a long limit does not make a short one too
   short to meet on a busy machine; with no factor, a limit is its value. Tests use it to make each limit pass in seconds
 
-## Check
+## A workspace
+
+`crate [-C <path>] up [--attempt]`, `run [--] <argv...>`, `services`, `logs [<member>]`, `down`, `name`: a
+checkout's running copy of its repo. Each gives the same from another folder with `-C <checkout>` as from inside it.
+
+- the name: `<name>-<folder>`, from `crate.toml`'s `name` and the checkout's folder; with no `name` declared, the
+  repo's folder is the name. The name must be a DNS label (`a-z`, `0-9`, `-`, 63 or fewer). It is the network, the
+  pods, the containers and the volumes' prefix
+- `up`: the network (with `--opt isolate=strict`), each service as a pod, the tools member, then `[tools] setup`. A
+  second `up` changes nothing, and a stopped member starts again. An attempt (`--attempt`) has an internal network
+  with no route outside, runs in a worktree of its own, and is refused in a checkout whose workspace is up
+- `run`: every word after `run` (after an optional `--`) is the command's argv, its flags among them. It runs in the
+  tools member as the checkout's user, in the caller's folder when the caller is inside the checkout, else at its
+  root. With no workspace made, `run` makes it first. Its exit is the command's
+- `services`: plays the services again, with the tools member left running. `logs <member>` reads a member's output
+  (`tools`, or a service). `down`: removes the containers, pods, volumes and network of the workspace, and a second
+  `down` changes nothing
+
+`crate.toml`'s tables:
+
+```toml
+services = ".devcontainer/pod.yaml"  # the services file, or no services
+
+[tools]
+setup = "npm ci"  # run once when the tools member is made, as the checkout's user, at its root
+volumes = ["node_modules"]  # the checkout's folders kept in volumes; ["node_modules"] when absent
+
+[tools.env]
+POSTGRES_HOST = "postgres"  # an env value of the tools member
+```
+
+The services file holds Pod documents only. Each is a Pod named `WORKSPACE-<service>`. `WORKSPACE` is replaced by
+the workspace's name everywhere in the document, and each pod is played alone with `--network <name>:alias=<service>`,
+so the tools member reaches its own `postgres` by name. A container may set no `resources.limits` or
+`resources.requests`. A volume in a service document is `<name>-<key>`. The tools member's volumes are
+`<name>-<slug>`, the folder with its leading dots taken away and each character not `a-z` or `0-9` made `-`.
+
 
 `just check`: `go vet`, `go test ./...`, shellcheck on the shell that is left, then `test/hooks.test.sh`, `test/apply.test.sh`, `test/release.test.sh` and
 `test/postsubmit.test.sh` on real git and podman.

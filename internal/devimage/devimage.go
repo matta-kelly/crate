@@ -30,6 +30,13 @@ func Toplevel(dir string) (string, error) {
 	return strings.TrimSpace(out), err
 }
 
+// RepoName is the repo's folder: the folder that holds the git common folder, the same for each worktree of
+// a checkout. A bare repo is its own folder with .git taken away.
+func RepoName(root string) (string, error) {
+	p := &plan{root: root}
+	return p.repoName()
+}
+
 // Hash is the hash of the inputs at the commit: 16 lowercase hex.
 func Hash(o Options) (string, error) {
 	p, err := open(o)

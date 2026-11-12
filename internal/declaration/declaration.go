@@ -18,6 +18,36 @@ type Dev struct {
 	Smoke         string   `toml:"smoke"`
 }
 
+// Tools is the [tools] table: the tools member's env, the checkout's volumes, and the setup that runs in it.
+type Tools struct {
+	Env     map[string]string `toml:"env"`
+	Volumes any               `toml:"volumes"`
+	Setup   string            `toml:"setup"`
+}
+
+// Folders is [tools] volumes as the checkout's folders. An absent key is no folders, and the caller's
+// default; a key that is not a list of strings is an error that names it.
+func (t Tools) Folders() ([]string, error) {
+	switch v := t.Volumes.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		return v, nil
+	case []any:
+		folders := make([]string, len(v))
+		for i, e := range v {
+			folder, ok := e.(string)
+			if !ok {
+				return nil, fmt.Errorf("crate.toml: [tools] volumes: %v is not a folder", e)
+			}
+			folders[i] = folder
+		}
+		return folders, nil
+	default:
+		return nil, fmt.Errorf("crate.toml: [tools] volumes is %v: expected a list of the checkout's folders", v)
+	}
+}
+
 // Declaration is a crate.toml. A flat key it does not hold is empty.
 type Declaration struct {
 	Crate             string `toml:"crate"`
@@ -28,7 +58,9 @@ type Declaration struct {
 	Postsubmit        string `toml:"postsubmit"`
 	PostsubmitTimeout string `toml:"postsubmit_timeout"`
 	Name              string `toml:"name"`
+	Services          string `toml:"services"`
 	Dev               Dev    `toml:"dev"`
+	Tools             Tools  `toml:"tools"`
 }
 
 // Parse reads the text of a crate.toml. A key it does not know is an error that names it.
