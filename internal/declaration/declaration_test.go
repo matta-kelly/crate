@@ -134,10 +134,11 @@ func TestATextThatIsNotTomlIsAnError(t *testing.T) {
 // [app]: how the repo's app runs. A built app must name the port it serves, and each port has a name and a number.
 func TestTheAppTableReadsAndABuiltAppMustNameItsPort(t *testing.T) {
 	good := "[app]\nbuild = \"Dockerfile\"\ncommand = \"pnpm dev\"\nhealth = \"wget -qO- http://127.0.0.1:3000/\"\n" +
-		"env = { PORT = \"3000\" }\n[[app.ports]]\nname = \"web\"\nport = 3000\n"
+		"env = { PORT = \"3000\" }\nneeds = [\"IMMICH_URL\", \"_KEY_2\"]\n[[app.ports]]\nname = \"web\"\nport = 3000\n"
 	d, err := declaration.Parse([]byte(good))
 	want := declaration.App{Build: "Dockerfile", Command: "pnpm dev", Health: "wget -qO- http://127.0.0.1:3000/",
-		Env: map[string]string{"PORT": "3000"}, Ports: []declaration.Port{{Name: "web", Port: 3000}}}
+		Env: map[string]string{"PORT": "3000"}, Ports: []declaration.Port{{Name: "web", Port: 3000}},
+		Needs: []string{"IMMICH_URL", "_KEY_2"}}
 	if err != nil || !reflect.DeepEqual(d.App, want) {
 		t.Errorf("a whole [app]: expected %+v, got %+v, %v", want, d.App, err)
 	}
@@ -146,6 +147,9 @@ func TestTheAppTableReadsAndABuiltAppMustNameItsPort(t *testing.T) {
 		{"a port with no name", "[app]\ncommand = \"x\"\n[[app.ports]]\nport = 3000\n", "[[app.ports]]"},
 		{"a port out of range", "[app]\ncommand = \"x\"\n[[app.ports]]\nname = \"web\"\nport = 70000\n", "70000"},
 		{"a key [app] does not know", "[app]\nrefuses = []\n", "app.refuses"},
+		{"a need that is not an env name", "[app]\nneeds = [\"IMMICH-URL\"]\n", "IMMICH-URL"},
+		{"a need that starts with a digit", "[app]\nneeds = [\"1KEY\"]\n", "1KEY"},
+		{"an empty need", "[app]\nneeds = [\"\"]\n", "env name"},
 	}
 	for _, row := range refused {
 		t.Run(row.name, func(t *testing.T) {

@@ -6,7 +6,8 @@ agent and the check each ask that system whether the change works. crate also gu
 ## A workspace
 
 ```
-<name>-<folder>          the workspace's name: crate.toml's name and the checkout's folder
+<name>-<folder>          the workspace's name: crate.toml's name and the checkout's folder (the name alone
+                         when the folder is the name)
 ├── network              its own (isolate=strict); an attempt's has no route outside
 ├── services             a pod each, reached by name (postgres)
 ├── tools                the dev image and the checkout: where commands run
@@ -48,7 +49,8 @@ env = { POSTGRES_HOST = "postgres" }
 command = "pnpm dev"                       # the dev server
 build = "Dockerfile"                       # the image that ships
 health = "wget -qO- http://127.0.0.1:3000/api/health"
-env = { NODE_ENV = "production", PORT = "3000" }   # the built app's env
+env = { NODE_ENV = "production", PORT = "3000", IMMICH_URL = "http://127.0.0.1:9" }   # the built app's env
+needs = ["IMMICH_URL"]                     # the binding: env every place that runs the app must give
 
 [[app.ports]]                              # the first is also the workspace's own host
 name = "web"
@@ -62,6 +64,10 @@ inputs = [".devcontainer/Containerfile", "pnpm-lock.yaml", "package.json"]
   joins the network as `<service>`. No `resources` limits. A volume is `<name>-<key>`
 - the tools member's volumes: `<name>-<folder>`, the folder's leading dots taken away and each other character not
   `a-z` or `0-9` made `-`
+- needs: the shape of the app's binding. The image and the declaration are the same everywhere; each place gives
+  the needs its own way: a workspace and an attempt by `[tools] env`, a check by `[app] env`, production by its
+  own. A place that lacks one fails `up` and names it. A check first runs the built image without them, and passes
+  only if it stops non-zero and its output names each one
 - a built app needs at least one port. The dev image needs the tool `health` calls (`wget`) when the dev server runs it
 - the gate's keys: `crate`, `image`, `timeout`, `ship`, `packages`, `postsubmit`, `postsubmit_timeout` ([The gate](#the-gate))
 

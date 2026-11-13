@@ -154,3 +154,84 @@ func TestAnAppThatNeverPassesItsHealthFailsUpWithItsLog(t *testing.T) {
 	}
 	w.mustLeaveNothing()
 }
+
+// needsApp is a check's built app that needs SECRET, with the image's CMD given.
+func needsApp(env, cmd string) worldOpts {
+	return worldOpts{Kind: system.Check, Busybox: true,
+		App: "[app]\nbuild = \"app.Containerfile\"\n" + health + "\nneeds = [\"SECRET\"]\nenv = { " + env + " }\n" + port,
+		AppFiles: map[string]string{"app.Containerfile": "FROM " + busyboxImage + "\nCMD [\"sh\", \"-c\", " + fmt.Sprintf("%q", cmd) + "]\n"}}
+}
+
+// guarded starts only with SECRET, and names it when it has none.
+const guarded = `[ -n "$SECRET" ] || { echo "missing SECRET" >&2; exit 1; }; ` +
+	`mkdir -p /tmp/www && echo up >/tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www`
+
+// A check's built app with needs: given them by [app] env it runs, and crate first proves the image refuses to start
+// without them. The proof's run is gone after.
+func TestACheckProvesTheBuiltAppRefusesWithoutItsNeeds(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, needsApp(`SECRET = "test-value"`, guarded))
+	w.up()
+	if got := strings.TrimSpace(w.mustRun("wget", "-qO-", "http://app:8080/")); got != "up" {
+		t.Errorf("the tools member asks app: expected up, got %q", got)
+	}
+	if _, err := w.podman("container", "exists", w.name+"-app-without-needs"); err == nil {
+		t.Errorf("after up: expected the proof's run gone, it is there")
+	}
+	if err := w.sys.Remove(nil); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	w.mustLeaveNothing()
+}
+
+// A built app that does not hold to its needs fails the check, with what it did and its output. These shorten
+// AppReady, so they run alone: CRATE_LIMIT_SCALE is the process's.
+func TestABuiltAppThatDoesNotHoldToItsNeedsFailsTheCheck(t *testing.T) {
+	t.Setenv("CRATE_LIMIT_SCALE", "6")
+	rows := []struct{ name, env, cmd, says string }{
+		{"[app] env does not give a need", `OTHER = "x"`, guarded, "[app] env does not give them"},
+		{"it starts anyway", `SECRET = "test-value"`, "exec sleep 600", "still running"},
+		{"it exits 0", `SECRET = "test-value"`, `[ -n "$SECRET" ] || exit 0; exec sleep 600`, "exited 0"},
+		{"its output does not name the need", `SECRET = "test-value"`, `[ -n "$SECRET" ] || { echo "no config" >&2; exit 1; }; exec sleep 600`, "does not name SECRET"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			w := newWorld(t, needsApp(row.env, row.cmd))
+			if err := w.sys.Hold(); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.sys.Image(); err != nil {
+				t.Fatal(err)
+			}
+			err := w.sys.Up(context.Background())
+			if err == nil || !strings.Contains(err.Error(), row.says) {
+				t.Errorf("Up: expected an error that says %q, got %v", row.says, err)
+			}
+			if err := w.sys.Remove(nil); err != nil {
+				t.Fatalf("Remove: %v", err)
+			}
+			w.mustLeaveNothing()
+		})
+	}
+}
+
+// A person's workspace gives the dev server its needs by [tools] env; one it does not give fails up, named.
+func TestAWorkspaceWhoseToolsEnvLacksANeedFailsUp(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, worldOpts{Kind: system.Work, Busybox: true, ToolsEnv: map[string]string{"OTHER": "x"},
+		App: "[app]\ncommand = " + fmt.Sprintf("%q", serve("dev")) + "\n" + health + "\nneeds = [\"SECRET\", \"OTHER\"]\n" + port})
+	if err := w.sys.Hold(); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.sys.Image(); err != nil {
+		t.Fatal(err)
+	}
+	err := w.sys.Up(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "needs SECRET;") || !strings.Contains(err.Error(), "[tools] env") {
+		t.Errorf("Up: expected an error that names SECRET alone and [tools] env, got %v", err)
+	}
+	if err := w.sys.Remove(nil); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	w.mustLeaveNothing()
+}

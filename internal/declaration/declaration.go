@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -55,13 +56,16 @@ type Port struct {
 // App is the [app] table: how the repo's app runs. build is the image that ships, which a check and postsubmit
 // run as production does; command is the dev server, which a person's workspace and an attempt run in the dev
 // image; health is the command run inside the app that says it is ready, as a quadlet's HealthCmd; env is the
-// built app's env in crate's runs; ports are its ports, the first the workspace's own host.
+// built app's env in crate's runs; ports are its ports, the first the workspace's own host. needs is the shape of
+// the app's binding: the env each place that runs it must give (the workspace by [tools] env, a check by env,
+// production by its own), and without which the built image refuses to start.
 type App struct {
 	Build   string            `toml:"build"`
 	Command string            `toml:"command"`
 	Health  string            `toml:"health"`
 	Env     map[string]string `toml:"env"`
 	Ports   []Port            `toml:"ports"`
+	Needs   []string          `toml:"needs"`
 }
 
 // Declaration is a crate.toml. A flat key it does not hold is empty.
@@ -80,6 +84,8 @@ type Declaration struct {
 	App               App    `toml:"app"`
 }
 
+var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
 // Parse reads the text of a crate.toml. A key it does not know is an error that names it.
 func Parse(data []byte) (Declaration, error) {
 	var d Declaration
@@ -97,6 +103,11 @@ func Parse(data []byte) (Declaration, error) {
 	}
 	if d.App.Build != "" && len(d.App.Ports) == 0 {
 		return Declaration{}, fmt.Errorf("crate.toml: [app] build has no [[app.ports]]: a built app must say the port it serves")
+	}
+	for _, need := range d.App.Needs {
+		if !envName.MatchString(need) {
+			return Declaration{}, fmt.Errorf("crate.toml: [app] needs %q: expected an env name (A-Z, a-z, 0-9 and _, not first a digit)", need)
+		}
 	}
 	for _, p := range d.App.Ports {
 		if p.Name == "" || p.Port < 1 || p.Port > 65535 {
