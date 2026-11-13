@@ -10,6 +10,7 @@ import (
 	"github.com/matta-kelly/crate/internal/declaration"
 	"github.com/matta-kelly/crate/internal/devimage"
 	"github.com/matta-kelly/crate/internal/machine"
+	"github.com/matta-kelly/crate/internal/router"
 	"github.com/matta-kelly/crate/internal/system"
 )
 
@@ -48,7 +49,12 @@ func openWorkspace() (*workspace, error) {
 	return &workspace{root: root, name: name}, nil
 }
 
-// system is this workspace as a system of one kind, on the default machine.
+// system is this workspace as a system of one kind, on the default machine. A person's workspace gets the
+// machine's router for its app's routes.
 func (w *workspace) system(kind string, out io.Writer) *system.System {
-	return system.New(machine.Default(), system.Spec{Kind: kind, Name: w.name, Checkout: w.root, Out: out})
+	spec := system.Spec{Kind: kind, Name: w.name, Checkout: w.root, Out: out}
+	if kind == system.Work {
+		spec.Router = router.New(machine.Default())
+	}
+	return system.New(machine.Default(), spec)
 }

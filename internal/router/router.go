@@ -48,12 +48,19 @@ type Route struct {
 
 // Router is the machine's router: one container, made on demand.
 type Router struct {
-	m machine.Machine
+	m   machine.Machine
+	own *config // set by NewAt; nil reads the environment
 }
 
 // New is the router on the machine m. It reads its name, port and state folder from WORKSPACE_ROUTER,
 // WORKSPACE_ROUTER_PORT and WORKSPACE_ROUTER_STATE.
 func New(m machine.Machine) *Router { return &Router{m: m} }
+
+// NewAt is the router named name, on the host's port, with its state in the folder state, whatever the
+// environment says. A test runs its own router this way, beside the others.
+func NewAt(m machine.Machine, name string, port int, state string) *Router {
+	return &Router{m: m, own: &config{name: name, port: port, state: state}}
+}
 
 // config is what the router reads of the environment, the same the copy's workspace.sh reads.
 type config struct {
@@ -63,6 +70,9 @@ type config struct {
 }
 
 func (r *Router) config() (config, error) {
+	if r.own != nil {
+		return *r.own, nil
+	}
 	c := config{name: "workspace-router", port: 80}
 	if v := os.Getenv("WORKSPACE_ROUTER"); v != "" {
 		c.name = v

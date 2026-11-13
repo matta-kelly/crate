@@ -62,5 +62,8 @@ func Hold() time.Duration { return scaled(time.Hour) }
 // Up is a person's and an attempt's `crate up`.
 func Up() time.Duration { return scaled(15 * time.Minute) }
 
+// AppReady is how long the app has to pass its health command once it is started.
+func AppReady() time.Duration { return scaled(time.Minute) }
+
 // Image is the longest `crate dev-image local` may take: Pull + Build + Smoke.
 func Image() time.Duration { return Pull() + Build() + Smoke() }

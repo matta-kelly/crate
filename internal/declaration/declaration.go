@@ -46,6 +46,24 @@ func (t Tools) Folders() ([]string, error) {
 	}
 }
 
+// Port is one of the app's ports: its name, the label of its route, and its number inside the app.
+type Port struct {
+	Name string `toml:"name"`
+	Port int    `toml:"port"`
+}
+
+// App is the [app] table: how the repo's app runs. build is the image that ships, which a check and postsubmit
+// run as production does; command is the dev server, which a person's workspace and an attempt run in the dev
+// image; health is the command run inside the app that says it is ready, as a quadlet's HealthCmd; env is the
+// built app's env in crate's runs; ports are its ports, the first the workspace's own host.
+type App struct {
+	Build   string            `toml:"build"`
+	Command string            `toml:"command"`
+	Health  string            `toml:"health"`
+	Env     map[string]string `toml:"env"`
+	Ports   []Port            `toml:"ports"`
+}
+
 // Declaration is a crate.toml. A flat key it does not hold is empty.
 type Declaration struct {
 	Crate             string `toml:"crate"`
@@ -59,6 +77,7 @@ type Declaration struct {
 	Services          string `toml:"services"`
 	Dev               Dev    `toml:"dev"`
 	Tools             Tools  `toml:"tools"`
+	App               App    `toml:"app"`
 }
 
 // Parse reads the text of a crate.toml. A key it does not know is an error that names it.
@@ -75,6 +94,14 @@ func Parse(data []byte) (Declaration, error) {
 			return Declaration{}, fmt.Errorf("crate.toml: unknown key %s", strings.Join(keys, ", "))
 		}
 		return Declaration{}, fmt.Errorf("crate.toml: %w", err)
+	}
+	if d.App.Build != "" && len(d.App.Ports) == 0 {
+		return Declaration{}, fmt.Errorf("crate.toml: [app] build has no [[app.ports]]: a built app must say the port it serves")
+	}
+	for _, p := range d.App.Ports {
+		if p.Name == "" || p.Port < 1 || p.Port > 65535 {
+			return Declaration{}, fmt.Errorf("crate.toml: [[app.ports]] %q %d: expected a name and a port from 1 to 65535", p.Name, p.Port)
+		}
 	}
 	return d, nil
 }

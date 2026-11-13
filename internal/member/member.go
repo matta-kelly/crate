@@ -39,6 +39,8 @@ type Spec struct {
 	Placement        machine.Placement
 	ReadOnlyRoot     bool
 	DropCapabilities []string
+	NoNewPrivileges  bool
+	Health           string
 	CPUs             string
 	Memory           string
 }
@@ -63,6 +65,7 @@ type BuiltOptions struct {
 	Env       []string
 	Mounts    []Mount
 	Volumes   []Volume
+	Health    string
 	Placement machine.Placement
 }
 
@@ -104,18 +107,24 @@ func Tools(o ToolsOptions) Spec {
 	}
 }
 
-// Built makes a built app member of a system.
+// Built makes a built app member of a system, run as production runs it: user 1000, a read-only root, every
+// capability dropped and no new privileges.
 func Built(o BuiltOptions) Spec {
 	return Spec{
-		Name:      o.Name,
-		Image:     o.Image,
-		Network:   o.Network,
-		Aliases:   o.Aliases,
-		Command:   o.Command,
-		Env:       o.Env,
-		Mounts:    o.Mounts,
-		Volumes:   o.Volumes,
-		Placement: o.Placement,
+		Name:             o.Name,
+		Image:            o.Image,
+		User:             "1000:1000",
+		Network:          o.Network,
+		Aliases:          o.Aliases,
+		Command:          o.Command,
+		Env:              o.Env,
+		Mounts:           o.Mounts,
+		Volumes:          o.Volumes,
+		Placement:        o.Placement,
+		ReadOnlyRoot:     true,
+		DropCapabilities: []string{"ALL"},
+		NoNewPrivileges:  true,
+		Health:           o.Health,
 	}
 }
 

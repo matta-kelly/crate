@@ -109,6 +109,12 @@ func (s *System) runArgs(spec member.Spec) []string {
 	for _, capability := range spec.DropCapabilities {
 		args = append(args, "--cap-drop", capability)
 	}
+	if spec.NoNewPrivileges {
+		args = append(args, "--security-opt", "no-new-privileges")
+	}
+	if spec.Health != "" {
+		args = append(args, "--health-cmd", spec.Health, "--health-interval", "disable")
+	}
 	if spec.CPUs != "" {
 		args = append(args, "--cpus", spec.CPUs)
 	}

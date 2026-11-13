@@ -1,5 +1,5 @@
 // Package system makes a workspace as a running system from its checkout's declaration: its network, its
-// services as a pod each, its tools member, its setup, and its removal.
+// services as a pod each, its tools member, its setup, its app and its routes, and its removal.
 package system
 
 import (
@@ -44,6 +44,7 @@ type Spec struct {
 	Env      []string
 	Keep     []string
 	Out      io.Writer
+	Router   Router // a person's workspace's routes; nil for none
 }
 
 // System is a system of one name on one machine.
@@ -114,7 +115,7 @@ func (s *System) Image() error {
 	return nil
 }
 
-// Up makes the network, the services, the tools member and the setup, all by ctx.
+// Up makes the network, the services, the tools member, the setup and the app, all by ctx.
 func (s *System) Up(ctx context.Context) (err error) {
 	decl, services, err := s.read()
 	if err != nil {
@@ -179,7 +180,7 @@ func (s *System) Up(ctx context.Context) (err error) {
 			return err
 		}
 	}
-	return nil
+	return s.app(ctx, decl, folders)
 }
 
 // Run runs argv in the tools member.
@@ -224,7 +225,10 @@ func (s *System) Services() error {
 // Logs writes a member's output to out.
 func (s *System) Logs(member string, out io.Writer) error {
 	name := s.spec.Name + "-tools"
-	if member != "" && member != "tools" {
+	switch {
+	case member == "app":
+		name = s.appName()
+	case member != "" && member != "tools":
 		name = s.spec.Name + "-" + member + "-" + member
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), limit.Podman())
@@ -267,6 +271,9 @@ func (s *System) remove(keep []string, release bool) error {
 		serviceVolumes = append(serviceVolumes, volumesOf(service.Document)...)
 	}
 
+	if err := s.removeApp(ctx); err != nil {
+		return err
+	}
 	for _, service := range services {
 		made, err := s.podExists(ctx, service.Name)
 		if err != nil {

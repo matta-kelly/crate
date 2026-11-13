@@ -24,7 +24,8 @@ import (
 )
 
 const (
-	alpine  = "docker.io/library/alpine:latest"
+	alpine       = "docker.io/library/alpine:latest"
+	busyboxImage = "docker.io/library/busybox:latest"
 	timeout = 5 * time.Minute
 )
 
@@ -44,6 +45,10 @@ type worldOpts struct {
 	Keep     []string
 	BadVolumes bool // [tools] volumes is a string, not a list
 	NoDevImage bool // leave the dev image off the machine, so Image pulls and builds
+	App        string            // the [app] table, or "" for none
+	AppFiles   map[string]string // files the app needs, by path in the checkout
+	Busybox    bool          // the dev image is busybox, which has httpd and wget
+	Router     system.Router // a person's workspace's router
 }
 
 type world struct {
@@ -104,14 +109,21 @@ image = "docker.io/library/alpine"
 containerfile = ".devcontainer/Containerfile"
 inputs = [".devcontainer/Containerfile", "package-lock.json"]
 
-%s`, strconv.Quote(w.name), services, tools))
+%s
+%s`, strconv.Quote(w.name), services, tools, o.App))
 	w.write(".devcontainer/Containerfile", "FROM "+alpine+"\n")
 	lock := "lock\n"
+	if o.Busybox {
+		lock = "lock busybox\n" // its own tag, so it never meets the alpine one
+	}
 	if o.NoDevImage {
 		lock = "lock " + w.name + "\n" // a tag no other test made, so Image pulls and builds
 	}
 	w.write("package-lock.json", lock)
 	w.write("src/README.md", "readme\n")
+	for path, body := range o.AppFiles {
+		w.write(path, body)
+	}
 	if o.Services {
 		w.write(".devcontainer/pod.yaml", servicesFile())
 	}
@@ -119,7 +131,7 @@ inputs = [".devcontainer/Containerfile", "package-lock.json"]
 	w.git("add", "-A")
 	w.git("commit", "-qm", "init")
 	if !o.NoDevImage {
-		w.tagDevImage()
+		w.tagDevImage(o.Busybox)
 	}
 	w.rec = &machinetest.Recorder{Slice: o.Slice}
 	w.sys = system.New(w.rec, system.Spec{
@@ -130,6 +142,7 @@ inputs = [".devcontainer/Containerfile", "package-lock.json"]
 		Env:      o.Env,
 		Keep:     o.Keep,
 		Out:      &w.out,
+		Router:   o.Router,
 	})
 	t.Cleanup(func() {
 		_ = w.sys.Remove(nil)
@@ -179,7 +192,7 @@ func (w *world) git(args ...string) {
 // tagDevImage puts the small alpine image in this machine's store under the tag `crate dev-image local` reads,
 // so a test makes no build. The tag is the hash dev-image gives the [dev] inputs, worked out here so that the
 // fixture needs no declaration parser.
-func (w *world) tagDevImage() {
+func (w *world) tagDevImage(busybox bool) {
 	w.t.Helper()
 	cmd := exec.Command("git", "ls-tree", "-r", "HEAD", "--", ".devcontainer/Containerfile", "package-lock.json")
 	cmd.Dir = w.root
@@ -189,10 +202,14 @@ func (w *world) tagDevImage() {
 	}
 	sum := sha256.Sum256(listing)
 	tag := "docker.io/library/alpine:" + hex.EncodeToString(sum[:])[:16]
-	if _, err := w.podman("image", "exists", alpine); err != nil {
-		w.podmanOK("pull", "-q", alpine)
+	base := alpine
+	if busybox {
+		base = busyboxImage
 	}
-	w.podmanOK("tag", alpine, tag)
+	if _, err := w.podman("image", "exists", base); err != nil {
+		w.podmanOK("pull", "-q", base)
+	}
+	w.podmanOK("tag", base, tag)
 }
 
 // up holds, images and makes the system.
