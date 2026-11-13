@@ -44,7 +44,7 @@ func given(t *testing.T) (root, calls string) {
 	files := map[string]string{
 		".devcontainer/devcontainer.json": "a\n", ".devcontainer/Containerfile": "b\n", "package-lock.json": "c\n",
 		"scripts/dev-image-smoke.sh": smokeStub,
-		"crate.toml": "name = \"que-pasa\"\n\n[dev]\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n",
+		"crate.toml":                 "name = \"que-pasa\"\n\n[dev]\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n",
 	}
 	for p, c := range files {
 		full := filepath.Join(root, p)

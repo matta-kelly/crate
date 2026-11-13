@@ -9,6 +9,7 @@ import (
 	"io"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -135,12 +136,35 @@ func Local(o Options, placement machine.Placement) (string, error) {
 	if err != nil || present {
 		return tag, err
 	}
-	err = p.podman("podman pull", limit.Pull(), p.stderr, "pull", tag)
-	if err == nil {
-		return tag, nil
+	if err = p.podman("podman pull", limit.Pull(), p.stderr, "pull", tag); err != nil {
+		fmt.Fprintf(p.stderr, "crate: %v, so %s is built\n", err, tag)
+		if err = p.buildTo(tag, placement); err != nil {
+			return tag, err
+		}
 	}
-	fmt.Fprintf(p.stderr, "crate: %v, so %s is built\n", err, tag)
-	return tag, p.buildTo(tag, placement)
+	p.dropOlder(hash)
+	return tag, nil
+}
+
+// hashTag is the shape of a dev image's tag: its inputs' hash.
+var hashTag = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+// dropOlder removes from this machine's store the repo's dev images of every other hash, once a new one is here, so
+// the store keeps one per repo. An image a container still uses, a workspace's made from an older commit, stays:
+// podman refuses to remove it, and that refusal is no error.
+func (p *plan) dropOlder(hash string) {
+	var out bytes.Buffer
+	if err := run(call{name: "podman images", limit: limit.Podman(), dir: p.root, prog: "podman",
+		args: []string{"images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=" + p.image}}, &out, io.Discard); err != nil {
+		return
+	}
+	for _, ref := range strings.Fields(out.String()) {
+		repo, tag, ok := strings.Cut(ref, ":")
+		if !ok || repo != p.image || tag == hash || !hashTag.MatchString(tag) {
+			continue
+		}
+		_ = p.podman("podman image rm", limit.Podman(), io.Discard, "image", "rm", ref)
+	}
 }
 
 func openAtHash(o Options) (*plan, string, error) {

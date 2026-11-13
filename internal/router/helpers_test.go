@@ -37,7 +37,10 @@ func TestMain(m *testing.M) {
 			os.Exit(1)
 		}
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	// Each test's slice is under this run's own, crate-router-test-<pid>.slice: stopping it leaves none.
+	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("crate-router-test-%d.slice", os.Getpid())).Run()
+	os.Exit(code)
 }
 
 // podman runs a podman command the test's setup needs, and stops the test when it fails.

@@ -46,6 +46,8 @@ type Slot interface {
 type Machine interface {
 	Hold(kind, system string) (Slot, error)
 	Place(kind, system string) (Placement, error)
+	// Unplace stops the system's own slice, once its members are gone, so a removed system leaves no slice.
+	Unplace(kind, system string) error
 }
 
 // noMachine is a machine crate places nothing on: a remote engine's, or one with no machine file. It still
@@ -61,6 +63,8 @@ func (noMachine) Hold(kind, system string) (Slot, error) {
 
 func (noMachine) Place(kind, system string) (Placement, error) { return "", CheckKind(kind) }
 
+func (noMachine) Unplace(kind, system string) error { return CheckKind(kind) }
+
 type noSlot struct{}
 
 func (noSlot) Bind()    {}
@@ -74,6 +78,9 @@ func (f failing) Hold(kind, system string) (Slot, error) {
 	}
 	return nil, f.err
 }
+
+// Unplace has nothing to stop: a failing machine placed nothing.
+func (f failing) Unplace(kind, system string) error { return CheckKind(kind) }
 
 func (f failing) Place(kind, system string) (Placement, error) {
 	if err := CheckKind(kind); err != nil {

@@ -667,6 +667,13 @@ func TestDownPutsItsOutputToTheCaller(t *testing.T) {
 	}
 }
 
+// TestMain runs the tests, then stops this run's own slice, crate-test-<pid>.slice, under which each test's slice is.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	_ = exec.Command("systemctl", "--user", "stop", fmt.Sprintf("crate-test-%d.slice", os.Getpid())).Run()
+	os.Exit(code)
+}
+
 // --- placement ---
 
 // ownSlice makes a slice of this test's own and keeps it alive for the test, then removes it.

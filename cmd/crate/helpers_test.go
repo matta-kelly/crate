@@ -95,10 +95,15 @@ image)
     grep -qxF -- "$3" "$T/local"
     ;;
   rm)
+    [ "${IN_USE:-}" != "$3" ] || { echo "Error: image used by a container" >&2; exit 2; }
     grep -vxF -- "$3" "$T/local" >"$T/local.new"
     mv "$T/local.new" "$T/local"
     ;;
   esac
+  ;;
+images)
+  ref=; while [ $# -gt 0 ]; do case $1 in reference=*) ref=${1#reference=} ;; esac; shift; done
+  grep -- "^$ref:" "$T/local" || true
   ;;
 esac
 `

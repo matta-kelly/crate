@@ -246,6 +246,36 @@ func TestLocalPullsFromGhcr(t *testing.T) {
 	}
 }
 
+// Once a new dev image is on the machine, the repo's images of other hashes go, so the store keeps one per repo.
+// One a container still uses stays, and so does any other tag or another repo's image.
+func TestLocalDropsTheReposOlderImages(t *testing.T) {
+	f := newFx(t, "que-pasa")
+	older, inUse := image+":aaaaaaaaaaaaaaaa", image+":bbbbbbbbbbbbbbbb"
+	for _, tag := range []string{older, inUse, image + ":main", "ghcr.io/matta-kelly/basis-dev:cccccccccccccccc"} {
+		f.onMachine(tag)
+	}
+	tag := image + ":" + goldenHash
+	f.inRegistry(tag, 4)
+	r := f.dev([]string{"IN_USE=" + inUse}, "local")
+	if r.code != 0 || r.out != tag+"\n" {
+		t.Fatalf("expected exit 0 and %q, got %s", tag, r)
+	}
+	store := f.local()
+	for _, want := range []string{tag, inUse, image + ":main", "ghcr.io/matta-kelly/basis-dev:cccccccccccccccc"} {
+		if !strings.Contains(store, want+"\n") {
+			t.Errorf("the store: expected %s kept, got\n%s", want, store)
+		}
+	}
+	if strings.Contains(store, older) {
+		t.Errorf("the store: expected %s gone, got\n%s", older, store)
+	}
+	// the image already here: nothing is fetched, and nothing is dropped
+	f.onMachine(older)
+	if r := f.dev(nil, "local"); r.code != 0 || !strings.Contains(f.local(), older) {
+		t.Errorf("a second local: expected nothing dropped, got %s\n%s", r, f.local())
+	}
+}
+
 func TestLocalBuildsWhenNoOneHasIt(t *testing.T) {
 	f := newFx(t, "que-pasa")
 	tag := image + ":" + goldenHash
@@ -902,10 +932,10 @@ func TestARemoteEngineNeedsOnlyPodmanAndSkopeoOnThePath(t *testing.T) {
 	if strings.Contains(calls, "--cgroup-parent") || strings.Contains(calls, "FORBIDDEN") {
 		t.Errorf("the calls: expected no cgroup, systemd-run or user manager, got\n%s", calls)
 	}
-	allowed := regexp.MustCompile(`^(podman (image (exists|rm) |pull |build |tag |push )|skopeo (inspect|copy) |smoke )`)
+	allowed := regexp.MustCompile(`^(podman (image (exists|rm) |images |pull |build |tag |push )|skopeo (inspect|copy) |smoke )`)
 	for _, l := range lines(calls) {
 		if !allowed.MatchString(l) {
-			t.Errorf("a call outside podman image exists, pull, build, tag, image rm and push, and skopeo: %q", l)
+			t.Errorf("a call outside podman image exists, images, pull, build, tag, image rm and push, and skopeo: %q", l)
 		}
 	}
 	if !strings.Contains(calls, "podman build") || !strings.Contains(calls, "podman push") {

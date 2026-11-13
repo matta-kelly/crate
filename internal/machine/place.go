@@ -36,6 +36,19 @@ func (m *ceiling) Place(kind, system string) (Placement, error) {
 	return Placement(leaf), nil
 }
 
+// Unplace stops the system's leaf slice. A leaf that is not there is already gone.
+func (m *ceiling) Unplace(kind, system string) error {
+	if err := CheckKind(kind); err != nil {
+		return err
+	}
+	leaf := m.leaf(kind, system)
+	err := systemd("systemctl --user stop", "systemctl", "--user", "stop", leaf)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "not loaded") {
+		return nil
+	}
+	return err
+}
+
 // leaf is the slice a system's members go in. The system's name is escaped as systemd-escape does, since a - in
 // a slice name is a level.
 func (m *ceiling) leaf(kind, system string) string {

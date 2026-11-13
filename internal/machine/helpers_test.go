@@ -506,6 +506,12 @@ func TestHelperProcess(t *testing.T) {
 		} else {
 			write("ok " + string(p))
 		}
+	case "unplace":
+		if err := m.Unplace(kind, system); err != nil {
+			fail(err)
+		} else {
+			write("ok ")
+		}
 	case "hold":
 		s, err := m.Hold(kind, system)
 		if err != nil {

@@ -331,6 +331,10 @@ func (s *System) remove(keep []string, release bool) error {
 			return fmt.Errorf("down: the network %s is still there: %w", s.spec.Name, err)
 		}
 	}
+	// Its members are gone, so its own slice goes too.
+	if err := s.m.Unplace(s.spec.Kind, s.spec.Name); err != nil {
+		return fmt.Errorf("down: the slice of %s is still there: %w", s.spec.Name, err)
+	}
 
 	if release && s.slot != nil {
 		s.slot.Release()

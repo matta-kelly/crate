@@ -23,6 +23,8 @@ func (m *noSlotMachine) Place(kind, system string) (machine.Placement, error) {
 	return "", nil
 }
 
+func (m *noSlotMachine) Unplace(kind, system string) error { return nil }
+
 // Past its limit Hold returns the machine's error, holds nothing, and the caller makes nothing.
 func TestHoldReturnsTheMachinesErrorAndMakesNothing(t *testing.T) {
 	want := errors.New("no slot for an hour")
@@ -53,6 +55,8 @@ func (m *lateMachine) Place(kind, system string) (machine.Placement, error) {
 	m.places.Add(1)
 	return "", nil
 }
+
+func (m *lateMachine) Unplace(kind, system string) error { return nil }
 
 type lateSlot struct{ m *lateMachine }
 

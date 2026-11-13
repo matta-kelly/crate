@@ -7,7 +7,7 @@ import (
 	"github.com/matta-kelly/crate/internal/machine"
 )
 
-// Call is one call on a Recorder: Op is Hold, Bind, Release or Place.
+// Call is one call on a Recorder: Op is Hold, Bind, Release, Place or Unplace.
 type Call struct {
 	Op     string
 	Kind   string
@@ -44,6 +44,14 @@ func (r *Recorder) Place(kind, system string) (machine.Placement, error) {
 	}
 	r.record("Place", kind, system)
 	return machine.Placement(r.Slice), nil
+}
+
+func (r *Recorder) Unplace(kind, system string) error {
+	if err := machine.CheckKind(kind); err != nil {
+		return err
+	}
+	r.record("Unplace", kind, system)
+	return nil
 }
 
 type slot struct {

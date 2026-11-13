@@ -57,6 +57,27 @@ func TestPlaceNamesEachSliceUnderItsKindAndTheMachinesSlice(t *testing.T) {
 	}
 }
 
+// Unplace stops the system's own slice, so a removed system leaves none; its kind's slice stays, and a second
+// Unplace, of a slice already gone, is no error.
+func TestUnplaceStopsTheSystemsSliceAndKeepsItsKinds(t *testing.T) {
+	f := newFixture(t, 1, 1, 1)
+	leaf := string(f.place(machine.Work, "que-pasa-main"))
+	kindSlice := f.slice + "-" + machine.Work + ".slice"
+	for i := 0; i < 2; i++ {
+		h := f.startHelper("unplace", machine.Work, "que-pasa-main")
+		if out := strings.TrimSpace(h.waitOut(t, 30*time.Second)); out != "ok" {
+			t.Fatalf("Unplace %d: expected ok, got %q", i+1, out)
+		}
+		h.waitExit(t, 30*time.Second)
+	}
+	if got := f.show(leaf, "ActiveState")["ActiveState"]; got == "active" {
+		t.Errorf("the leaf %s after Unplace: expected it stopped, got %s", leaf, got)
+	}
+	if got := f.show(kindSlice, "ActiveState")["ActiveState"]; got != "active" {
+		t.Errorf("the kind's slice %s after Unplace: expected it kept, got %s", kindSlice, got)
+	}
+}
+
 // noLimit is what systemd shows for a property crate does not set.
 func noLimit(value string) bool {
 	switch value {
