@@ -103,3 +103,23 @@ func TestTheCopysRouterIsRemadeOnceAndKeepsBothWorkspaces(t *testing.T) {
 		t.Errorf("Remove took the copy's router away")
 	}
 }
+
+// A router made on another host port, with no CPU limit, is made again on the router's port, and serves there.
+func TestARouterOnAnotherPortIsRemadeOnTheRoutersPort(t *testing.T) {
+	r := newRig(t)
+	startRouterByHand(t, r, "")
+	old := podman(t, "inspect", r.name, "--format", "{{.Id}}")
+	r.port = freePort(t)
+	t.Setenv("WORKSPACE_ROUTER_PORT", strconv.Itoa(r.port))
+
+	startTarget(t, r.name+"-target", r.network, r.workspace+"-app", map[int]string{3000: "on the new port"})
+	addRoutes(t, r.workspace, r.network, []router.Route{{Name: "web", Target: r.workspace + "-app", Port: 3000}})
+
+	if made := podman(t, "inspect", r.name, "--format", "{{.Id}}"); made == old {
+		t.Errorf("Add did not make the router on the old port again")
+	}
+	if port := podman(t, "port", r.name, "80/tcp"); port != "127.0.0.1:"+strconv.Itoa(r.port) {
+		t.Errorf("the remade router's port: expected 127.0.0.1:%d, got %s", r.port, port)
+	}
+	waitBody(t, 10*time.Second, r.port, r.workspace+".localhost", 200, "on the new port")
+}

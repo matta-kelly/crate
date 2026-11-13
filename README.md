@@ -12,7 +12,7 @@ agent and the check each ask that system whether the change works. crate also gu
 ├── services             a pod each, reached by name (postgres)
 ├── tools                the dev image and the checkout: where commands run
 └── app                  the change as it runs, reached as app
-    └── routes           <name>-<folder>.localhost, <port name>.<name>-<folder>.localhost
+    └── routes           <name>-<folder>.localhost:8080, <port name>.<name>-<folder>.localhost:8080
 ```
 
 `crate [-C <checkout>] <verb>`:

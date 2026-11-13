@@ -52,6 +52,10 @@ type Router struct {
 	own *config // set by NewAt; nil reads the environment
 }
 
+// DefaultPort is the host port the router serves on: 1024 or above, so rootless podman binds it with no change to
+// the machine. A URL then carries it: http://<workspace>.localhost:8080.
+const DefaultPort = 8080
+
 // New is the router on the machine m. It reads its name, port and state folder from WORKSPACE_ROUTER,
 // WORKSPACE_ROUTER_PORT and WORKSPACE_ROUTER_STATE.
 func New(m machine.Machine) *Router { return &Router{m: m} }
@@ -73,7 +77,7 @@ func (r *Router) config() (config, error) {
 	if r.own != nil {
 		return *r.own, nil
 	}
-	c := config{name: "workspace-router", port: 80}
+	c := config{name: "workspace-router", port: DefaultPort}
 	if v := os.Getenv("WORKSPACE_ROUTER"); v != "" {
 		c.name = v
 	}
@@ -219,8 +223,8 @@ func prepare(c config) error {
 	return os.WriteFile(path, []byte(caddyfile), 0o644)
 }
 
-// ensure leaves the router made, started and on network. A router the copy made, with a CPU limit, is made
-// again in this machine's slice, once, on every network the old one had joined.
+// ensure leaves the router made, started and on network. A router made otherwise, with a CPU limit (the copy's)
+// or on another host port, is made again as this one, once, on every network the old one had joined.
 func (r *Router) ensure(c config, network string) error {
 	if _, err := r.podman("network", "exists", c.name); err != nil {
 		if _, err := r.podman("network", "create", c.name); err != nil {
@@ -234,11 +238,12 @@ func (r *Router) ensure(c config, network string) error {
 		r.sayRemade(c)
 		return nil
 	}
-	cpus, err := r.podman("inspect", c.name, "--format", "{{.HostConfig.NanoCpus}}")
+	made, err := r.podman("inspect", c.name, "--format",
+		"{{.HostConfig.NanoCpus}} {{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostPort}}{{end}}{{end}}")
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(cpus) != "0" {
+	if strings.TrimSpace(made) != "0 "+strconv.Itoa(c.port) {
 		networks, err := r.networks(c.name)
 		if err != nil {
 			return err

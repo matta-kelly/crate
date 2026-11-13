@@ -43,7 +43,7 @@ func TestARouteAnswersAtTheWorkspaceAndAtItsName(t *testing.T) {
 }
 
 // The URL has the router's port when it is not 80, and has none when it is, the first route also at the
-// workspace's own host, both read without the router serving at 80.
+// workspace's own host, both read without the router serving there. With no port set, it is 8080.
 func TestTheURLFollowsTheRoutersPort(t *testing.T) {
 	r := newRig(t)
 	addRoutes(t, r.workspace, r.network, webAndAPI(r.workspace))
@@ -59,6 +59,17 @@ func TestTheURLFollowsTheRoutersPort(t *testing.T) {
 	}
 
 	t.Setenv("WORKSPACE_ROUTER_PORT", "")
+	got, err = r.urls(r.workspace)
+	atDefault := []string{
+		"http://" + r.workspace + ".localhost:8080",
+		"http://web." + r.workspace + ".localhost:8080",
+		"http://api." + r.workspace + ".localhost:8080",
+	}
+	if err != nil || !reflect.DeepEqual(got, atDefault) {
+		t.Errorf("URLs with no port set: expected %v, got %v, %v", atDefault, got, err)
+	}
+
+	t.Setenv("WORKSPACE_ROUTER_PORT", "80")
 	got, err = r.urls(r.workspace)
 	atEighty := []string{
 		"http://" + r.workspace + ".localhost",
