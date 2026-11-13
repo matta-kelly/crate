@@ -19,7 +19,8 @@ agent and the check each ask that system whether the change works. crate also gu
 
 - `up [--attempt]`: make it, or start what stopped. A second `up` changes nothing. An attempt runs in a worktree of its
   own, with no route
-- `run [--] <argv...>`: run a command in the tools member, in the caller's folder. Its exit is the command's
+- `run [-e NAME]... [--] <argv...>`: run a command in the tools member, in the caller's folder. Its exit is the
+  command's. Each `-e NAME` passes this shell's `NAME` by name, so a secret's value is never in argv
 - `url`: the workspace's URLs, one per line
 - `logs [tools|app|<service>]`: a member's output
 - `services`: play the services again

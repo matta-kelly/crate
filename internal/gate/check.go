@@ -141,7 +141,7 @@ func (r *Repo) run(kind, dir string, decl declaration.Declaration, limit time.Du
 		fmt.Fprintf(out, "crate: %v\n", err)
 		return ErrRefused
 	}
-	code, err := s.Run(ctx, append([]string{"scripts/check.sh"}, args...), out)
+	code, err := s.Run(ctx, append([]string{"scripts/check.sh"}, args...), nil, out)
 	if ctx.Err() != nil {
 		return past()
 	}

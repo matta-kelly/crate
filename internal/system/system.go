@@ -190,8 +190,8 @@ func (s *System) Up(ctx context.Context) (err error) {
 	return s.app(ctx, decl, folders)
 }
 
-// Run runs argv in the tools member.
-func (s *System) Run(ctx context.Context, argv []string, out io.Writer) (int, error) {
+// Run runs argv in the tools member, with each of env, a name, given the caller's value of it (podman exec -e NAME).
+func (s *System) Run(ctx context.Context, argv, env []string, out io.Writer) (int, error) {
 	dir := s.spec.Checkout
 	if wd, err := os.Getwd(); err == nil && within(s.spec.Checkout, wd) {
 		dir = wd
@@ -199,6 +199,9 @@ func (s *System) Run(ctx context.Context, argv []string, out io.Writer) (int, er
 	args := []string{"exec", "--workdir", dir}
 	if terminal(os.Stdin) {
 		args = append(args, "-it")
+	}
+	for _, name := range env {
+		args = append(args, "-e", name)
 	}
 	args = append(args, s.spec.Name+"-tools")
 	args = append(args, argv...)

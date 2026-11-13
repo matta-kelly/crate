@@ -133,6 +133,12 @@ func (w *ws) podman(args ...string) string {
 // run runs crate in cwd, with -C when the caller wants another folder.
 func (w *ws) run(cwd string, args ...string) (result, error) {
 	w.t.Helper()
+	return w.runEnv(cwd, nil, args...)
+}
+
+// runEnv is run with extra KEY=value lines in crate's own environment.
+func (w *ws) runEnv(cwd string, env []string, args ...string) (result, error) {
+	w.t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, crateBin, args...)
@@ -140,6 +146,7 @@ func (w *ws) run(cwd string, args ...string) (result, error) {
 	cmd.Env = append(filterEnv(os.Environ(), "CRATE_MACHINE", "CONTAINER_HOST", "CRATE_LIMIT_SCALE"),
 		"PATH="+os.Getenv("PATH"),
 		"CRATE_MACHINE="+filepath.Join(w.dir, "no-machine.toml"))
+	cmd.Env = append(cmd.Env, env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	start := time.Now()
@@ -297,6 +304,22 @@ func TestRunPassesEveryWordAsArgv(t *testing.T) {
 	}
 	if r.code != 7 {
 		t.Errorf("run's exit: expected 7, got %d: %s", r.code, r)
+	}
+}
+
+// run -e NAME gives the tools member the host's NAME, its value never in argv; a NAME the host has not set is refused,
+// named, and runs nothing.
+func TestRunPassesTheHostsEnvByName(t *testing.T) {
+	t.Parallel()
+	w := newWs(t, "")
+	r, err := w.runEnv(w.root, []string{"CRATE_TEST_SECRET=s3cret value", "CRATE_TEST_OTHER=two"},
+		"run", "-e", "CRATE_TEST_SECRET", "-e", "CRATE_TEST_OTHER", "--", "sh", "-c", `echo "$CRATE_TEST_SECRET|$CRATE_TEST_OTHER"`)
+	if err != nil || r.code != 0 || strings.TrimSpace(r.out) != "s3cret value|two" {
+		t.Errorf("run -e: expected the host's values, got %v %s", err, r)
+	}
+	r, err = w.run(w.root, "run", "-e", "CRATE_TEST_UNSET", "sh", "-c", "echo ran")
+	if err != nil || r.code == 0 || !strings.Contains(r.err, "CRATE_TEST_UNSET is not set") || strings.Contains(r.out, "ran") {
+		t.Errorf("run -e of an unset name: expected a refusal that names it, and nothing run, got %v %s", err, r)
 	}
 }
 
