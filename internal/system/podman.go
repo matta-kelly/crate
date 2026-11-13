@@ -8,10 +8,27 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
 )
+
+// engineRemote says podman is a client of a remote engine (podman-remote, or CONTAINER_HOST), asked once.
+var engineRemote = sync.OnceValue(func() bool {
+	if os.Getenv("CONTAINER_HOST") != "" {
+		return true
+	}
+	out, err := exec.Command("podman", "info", "--format", "{{.Host.ServiceIsRemote}}").Output()
+	return err == nil && strings.TrimSpace(string(out)) == "true"
+})
+
+func (s *System) isRemote() bool {
+	if s.remote != nil {
+		return s.remote()
+	}
+	return engineRemote()
+}
 
 // call runs a podman command, its output to the caller, and one error that names it.
 func (s *System) call(ctx context.Context, args ...string) (string, error) {
@@ -123,7 +140,9 @@ func (s *System) runArgs(spec member.Spec) []string {
 	}
 	if spec.Placement != "" {
 		args = append(args, "--cgroup-parent", string(spec.Placement))
-	} else {
+	} else if !s.isRemote() {
+		// --cgroup-manager is the local engine's own flag: podman-remote refuses it, and the engine it reaches
+		// keeps its own manager.
 		args = append(args, "--cgroup-manager=cgroupfs")
 	}
 	for _, mount := range spec.Mounts {

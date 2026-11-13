@@ -56,6 +56,7 @@ type System struct {
 	bound  bool
 	image  string
 	played []Service
+	remote func() bool // whether podman is a client of a remote engine; engineRemote when nil
 }
 
 // New makes a system on m. It starts nothing.

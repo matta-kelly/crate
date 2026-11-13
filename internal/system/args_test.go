@@ -11,7 +11,7 @@ import (
 )
 
 func TestRunArgsCarryTheMembersLimitsAndReadOnlyRoot(t *testing.T) {
-	s := &System{}
+	s := &System{remote: func() bool { return false }}
 	full := member.Spec{
 		Name:             "stateball-stateball-app",
 		Image:            "stateball:1",
@@ -76,6 +76,20 @@ func TestRunArgsCarryTheMembersLimitsAndReadOnlyRoot(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A member with no slice runs under cgroupfs on a local engine. podman-remote refuses that flag, so a remote
+// engine's run has none.
+func TestRunArgsSetTheCgroupManagerOnlyOnALocalEngine(t *testing.T) {
+	spec := member.Spec{Name: "a", Image: "i"}
+	local := (&System{remote: func() bool { return false }}).runArgs(spec)
+	if !slices.Contains(local, "--cgroup-manager=cgroupfs") {
+		t.Errorf("runArgs on a local engine: expected --cgroup-manager=cgroupfs, got %v", local)
+	}
+	remote := (&System{remote: func() bool { return true }}).runArgs(spec)
+	if hasPrefix(remote, "--cgroup-manager") {
+		t.Errorf("runArgs on a remote engine: expected no --cgroup-manager, got %v", remote)
 	}
 }
 
