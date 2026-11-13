@@ -16,7 +16,8 @@ import (
 const assetName = "crate-linux-amd64.tar.gz"
 
 // buildAsset puts the asset in dist/ at the root of the repo: bin/crate (a static binary that says its version
-// and commit), VERSION and COMMIT, at the root of the archive with no folder before them. It gives the path.
+// and commit), hooks/ (the git hooks, which run that binary), VERSION and COMMIT, at the root of the archive with no
+// folder before them. It gives the path.
 func buildAsset(root string, v version, commit string) (string, error) {
 	scratch, err := os.MkdirTemp("", "crate-build-")
 	if err != nil {
@@ -35,6 +36,14 @@ func buildAsset(root string, v version, commit string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	pre, err := os.ReadFile(filepath.Join(root, "hooks", "pre-receive"))
+	if err != nil {
+		return "", err
+	}
+	post, err := os.ReadFile(filepath.Join(root, "hooks", "post-receive"))
+	if err != nil {
+		return "", err
+	}
 	dist := filepath.Join(root, "dist")
 	if err := os.MkdirAll(dist, 0o755); err != nil {
 		return "", err
@@ -47,7 +56,7 @@ func buildAsset(root string, v version, commit string) (string, error) {
 		name string
 		body []byte
 		mode int64
-	}{{"bin/crate", body, 0o755}, {"VERSION", []byte(v.number + "\n"), 0o644}, {"COMMIT", []byte(commit + "\n"), 0o644}} {
+	}{{"bin/crate", body, 0o755}, {"hooks/pre-receive", pre, 0o755}, {"hooks/post-receive", post, 0o755}, {"VERSION", []byte(v.number + "\n"), 0o644}, {"COMMIT", []byte(commit + "\n"), 0o644}} {
 		if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.body))}); err != nil {
 			return "", err
 		}

@@ -925,14 +925,3 @@ func TestAMachineWithAFilePlacesTheBuildUnderItsSlice(t *testing.T) {
 		t.Errorf("the build: expected it placed with %q, got\n%s", want, f.calls())
 	}
 }
-
-func TestBinCrateStaysTheShell(t *testing.T) {
-	// bin/crate stays the shell here: the built binary goes to the release's folder and to go test, never to bin/.
-	root, err := filepath.Abs("../..")
-	must(t, err)
-	b, err := os.ReadFile(filepath.Join(root, "bin", "crate"))
-	must(t, err)
-	if !strings.HasPrefix(string(b), "#!") {
-		t.Errorf("bin/crate: expected the shell script, got %.20q", b)
-	}
-}

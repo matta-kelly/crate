@@ -2,7 +2,7 @@
 # The tests of crate apply, on real git: a declaration makes each repo's bare repo, with crate's hooks and its copy to
 # a stand-in GitHub, and seeds a new repo's main from it. Run again, it changes nothing.
 set -uo pipefail
-root=$(dirname "$(dirname "$(readlink -f "$0")")")
+root=${CRATE_ROOT:-$(dirname "$(dirname "$(readlink -f "$0")")")}  # the install to test: the built layout
 tmp=$(mktemp -d)
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 trap 'rm -rf "$tmp"' EXIT

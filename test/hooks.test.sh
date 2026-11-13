@@ -2,7 +2,8 @@
 # The tests of crate's hooks, on real git and the real engine: a throwaway bare repo with crate on it, and a tiny repo
 # whose check runs in alpine and passes or fails as its file `verdict` says.
 set -uo pipefail
-root=$(dirname "$(dirname "$(readlink -f "$0")")")
+repo=$(dirname "$(dirname "$(readlink -f "$0")")")
+root=${CRATE_ROOT:-$repo}  # the install to test: the built layout
 alpine=docker.io/library/alpine@sha256:0f49f331d9212aff11b932863be4eb01cdf962969aa86dab7d1ee21ac6f5f52b
 tmp=$(mktemp -d)
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
@@ -128,21 +129,20 @@ rm slow && git commit -qam unhang
 if git push -q "$tmp/repo.git" main 2>/dev/null; then ok "the next push is not held by the stopped check"
 else not_ok "the next push is not held by the stopped check"; fi
 
-# image "dev": the repo's own scripts/dev-image.sh names the image, run on the pushed commit
+# image "dev": the check runs in crate's own dev image of the pushed commit, put on this machine by crate dev-image
+# local: here its copy, tagged by hand, so the test builds nothing
 setup
 git push -q "$tmp/repo.git" main 2>/dev/null
-cat >scripts/dev-image.sh <<SH
-#!/bin/sh
-# a stand-in: it reads the pushed commit, as the real one hashes it, then names the image
-[ "\$1" = local ] && git ls-tree HEAD crate.toml >/dev/null && echo "built nothing" && echo "$alpine"
-SH
-chmod +x scripts/dev-image.sh
-printf 'crate = "1"\nimage = "dev"\n' >crate.toml
+printf 'crate = "1"\nimage = "dev"\n\n[dev]\nimage = "localhost/crate-test-dev"\ninputs = ["Containerfile"]\ncontainerfile = "Containerfile"\n' >crate.toml
+echo "FROM $alpine" >Containerfile
 git add -A && git commit -qm dev
+dev="localhost/crate-test-dev:$("$root/bin/crate" dev-image hash)"
+${CRATE_ENGINE:-podman} tag "$alpine" "$dev"
 out=$(git push "$tmp/repo.git" main 2>&1)
-if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "checking .* in $alpine" <<<"$out"; then
-  ok "image dev: the check runs in the image the repo's dev-image.sh names"
-else not_ok "image dev: the check runs in the image the repo's dev-image.sh names" "$out"; fi
+${CRATE_ENGINE:-podman} rmi -f "$dev" >/dev/null 2>&1
+if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "checking .* in $dev" <<<"$out"; then
+  ok "image dev: the check runs in crate's dev image of the pushed commit"
+else not_ok "image dev: the check runs in crate's dev image of the pushed commit" "$out"; fi
 
 # a failed checkout: the check's checkout cannot take the pushed commit (a stale index.lock makes the real
 # `git checkout` fail), though the tree it still holds would pass. The push is refused with crate's reason, the check
@@ -236,7 +236,7 @@ repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
 $out"; fi
 
 # the README says how a first version is set
-if grep -Eq 'git( -C [^ ]+)? tag ' "$root/README.md"; then ok "the README gives the command that sets a first version"
+if grep -Eq 'git( -C [^ ]+)? tag ' "$repo/README.md"; then ok "the README gives the command that sets a first version"
 else not_ok "the README gives the command that sets a first version"; fi
 
 echo "1..$n"

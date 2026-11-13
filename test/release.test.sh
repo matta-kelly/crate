@@ -2,7 +2,7 @@
 # The tests of crate's release, on real git and the real engine: a bare repo with crate on it, a second standing in for
 # GitHub, and a client that lands commits of each Conventional Commits type and reads the version tags that follow.
 set -uo pipefail
-root=$(dirname "$(dirname "$(readlink -f "$0")")")
+root=${CRATE_ROOT:-$(dirname "$(dirname "$(readlink -f "$0")")")}  # the install to test: the built layout
 alpine=docker.io/library/alpine@sha256:0f49f331d9212aff11b932863be4eb01cdf962969aa86dab7d1ee21ac6f5f52b
 tmp=$(mktemp -d)
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t

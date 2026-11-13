@@ -99,16 +99,19 @@ exact tree main becomes. A land is a plain `git push`.
 - release: each move of main tags a version of each of `packages` whose commits ask for one (Conventional Commits as
   semver; before 1.0.0 each bump moves down a place). The tag is the truth, and `ship` names how it publishes. A
   package's first version is tagged by hand in the bare repo: `git -C <bare> tag v<version> <commit>`
-- `bin/crate apply <file>`: make a server match its declaration. `bin/crate init <bare>`: put the hooks on a bare repo
+- `crate init <bare> [<github url>]`: put the hooks on a bare repo. `crate apply <file|->`: make a server match its
+  declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`). crate's own version is its install's
 
-The gate is still shell (`hooks/`, `lib/crate.sh`, `bin/crate`) until it moves into the Go binary.
+`hooks/` holds two one-line scripts that run `crate hook <name>` from the install beside them. The gate's state lives
+beside each bare repo, in `<bare>/crate`: the check's checkout, its lock, its log, and postsubmit's.
 
 ## Changing crate
 
 crate stays outside the gate it ships, so a broken hook never blocks its own fix. A change lands on GitHub's main after
-`just check` passes: `go vet`, `go test ./...`, shellcheck, then the shell tests in `test/` on real git and podman.
+`just check` passes: `go vet`, `go test ./...`, shellcheck, then the gate's tests in `test/`, run on real git and
+podman against the built install (`just build`, in `dist/crate`).
 
-- `just release <major.minor.patch>`: check, tag, move the major tag (`v2`), and put `crate-linux-amd64.tar.gz` on the
-  release. A machine runs crate at the major tag
+- `just release <major.minor.patch>`: check, tag, move the major tag (`v2`), and put `crate-linux-amd64.tar.gz`
+  (`bin/crate`, `hooks/`, `VERSION`, `COMMIT`) on the release. A machine runs crate at the major tag
 - `just rollback <major.minor.patch>`: move the major tag back
 - every call has a limit, in `internal/limit`. `CRATE_LIMIT_SCALE` divides them all, never below 1 s, for tests

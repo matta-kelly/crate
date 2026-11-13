@@ -1,26 +1,3 @@
-#!/usr/bin/env bash
-# crate's pre-receive: main moves only to a commit whose check passed on the exact tree main becomes. Git refuses the
-# whole push when this exits non-zero, and sends what it printed to the pusher. A branch other than main takes no check,
-# and a version tag is refused in every repo.
-set -euo pipefail
-# shellcheck source=lib/crate.sh
-. "$(dirname "$(readlink -f "$0")")/../lib/crate.sh"
-
-status=0
-while read -r old new ref; do
-  if [[ $ref == refs/tags/* ]]; then
-    if version_tag "${ref#refs/tags/}"; then
-      echo "crate: ${ref#refs/tags/} is a version tag, and only crate makes those. Push no version tags. To set a first version, run on the server: $(first_version_command "${ref#refs/tags/}")" >&2
-      status=1
-    fi
-    continue
-  fi
-  [ "$ref" = refs/heads/main ] || continue
-  if zero "$new"; then
-    echo "crate: main is never deleted" >&2
-    status=1
-    continue
-  fi
-  check "$old" "$new" || status=1
-done
-exit "$status"
+#!/bin/sh
+# crate's pre-receive: the binary beside this folder runs it.
+exec "$(dirname "$(readlink -f "$0")")/../bin/crate" hook pre-receive
