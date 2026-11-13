@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -14,8 +13,9 @@ import (
 
 const registry = "ghcr.io/matta-kelly/"
 
+// Where every repo keeps its Containerfile and its smoke, when [dev] names no other. The inputs and the name have no
+// default: a repo declares them.
 var (
-	defaultInputs        = []string{".devcontainer/devcontainer.json", ".devcontainer/Containerfile", "package-lock.json"}
 	defaultContainerfile = ".devcontainer/Containerfile"
 	defaultSmoke         = "scripts/dev-image-smoke.sh"
 )
@@ -45,13 +45,19 @@ func open(o Options) (*plan, error) {
 		return nil, err
 	}
 	dev := decl.Dev
-	p.inputs = orDefault(dev.Inputs, defaultInputs)
+	if decl.Name == "" {
+		return nil, fmt.Errorf("crate.toml at %s needs name: the repo's name, which names its dev image", p.rev)
+	}
+	if len(dev.Inputs) == 0 {
+		return nil, fmt.Errorf("crate.toml at %s needs [dev] inputs: the files the dev image's hash covers", p.rev)
+	}
+	p.inputs = dev.Inputs
 	p.containerfile = orDefault(dev.Containerfile, defaultContainerfile)
 	p.smoke = orDefault(dev.Smoke, defaultSmoke)
 	if !slices.Contains(p.inputs, p.containerfile) {
 		return nil, fmt.Errorf("[dev] inputs lack the Containerfile %s: the hash must cover what the build reads", p.containerfile)
 	}
-	if p.image, err = p.imageName(decl, o.Name); err != nil {
+	if p.image, err = p.imageName(decl); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -64,7 +70,7 @@ func orDefault[T string | []string](v, fallback T) T {
 	return v
 }
 
-// declaration reads crate.toml from the commit's tree. A commit with none gives the defaults.
+// declaration reads crate.toml from the commit's tree. A commit with none gives an empty one, which open refuses.
 func (p *plan) declaration() (declaration.Declaration, error) {
 	listed, err := git(p.root, "ls-tree", p.rev, "--", "crate.toml")
 	if err != nil {
@@ -80,39 +86,15 @@ func (p *plan) declaration() (declaration.Declaration, error) {
 	return declaration.Parse([]byte(text))
 }
 
-// imageName: the first that is there wins: [dev] image, the declared name, --name, the repo's folder.
-func (p *plan) imageName(decl declaration.Declaration, flag string) (string, error) {
+// imageName is [dev] image when the repo names one, else ghcr.io/matta-kelly/<name>-dev.
+func (p *plan) imageName(decl declaration.Declaration) (string, error) {
 	if image := decl.Dev.Image; image != "" {
 		if strings.Contains(path.Base(image), ":") {
 			return "", fmt.Errorf("[dev] image %s: expected a name with no tag", image)
 		}
 		return image, nil
 	}
-	name := decl.Name
-	if name == "" {
-		name = flag
-	}
-	if name == "" {
-		var err error
-		if name, err = p.repoName(); err != nil {
-			return "", err
-		}
-	}
-	return registry + name + "-dev", nil
-}
-
-// repoName is the folder that holds the git common folder, the same for each worktree of a checkout. A bare
-// repo is its own folder with .git taken away.
-func (p *plan) repoName() (string, error) {
-	out, err := git(p.root, "rev-parse", "--path-format=absolute", "--git-common-dir")
-	if err != nil {
-		return "", err
-	}
-	common := filepath.Clean(strings.TrimSpace(out))
-	if filepath.Base(common) == ".git" {
-		return filepath.Base(filepath.Dir(common)), nil
-	}
-	return strings.TrimSuffix(filepath.Base(common), ".git"), nil
+	return registry + decl.Name + "-dev", nil
 }
 
 // hash is git's tree entries of the inputs, which hold each file's blob hash and path, so one commit gives

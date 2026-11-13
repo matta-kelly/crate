@@ -133,7 +133,7 @@ else not_ok "the next push is not held by the stopped check"; fi
 # local: here its copy, tagged by hand, so the test builds nothing
 setup
 git push -q "$tmp/repo.git" main 2>/dev/null
-printf 'crate = "1"\nimage = "dev"\n\n[dev]\nimage = "localhost/crate-test-dev"\ninputs = ["Containerfile"]\ncontainerfile = "Containerfile"\n' >crate.toml
+printf 'crate = "2"\nname = "repo"\nimage = "dev"\n\n[dev]\nimage = "localhost/crate-test-dev"\ninputs = ["Containerfile"]\ncontainerfile = "Containerfile"\n' >crate.toml
 echo "FROM $alpine" >Containerfile
 git add -A && git commit -qm dev
 dev="localhost/crate-test-dev:$("$root/bin/crate" dev-image hash)"
@@ -143,6 +143,23 @@ ${CRATE_ENGINE:-podman} rmi -f "$dev" >/dev/null 2>&1
 if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "checking .* in $dev" <<<"$out"; then
   ok "image dev: the check runs in crate's dev image of the pushed commit"
 else not_ok "image dev: the check runs in crate's dev image of the pushed commit" "$out"; fi
+
+# image "dev" in a repo that does not declare itself: no name, or no [dev] inputs. crate guesses neither, so the push
+# is refused with the key it lacks, and main has not moved
+for row in 'no name|crate = "2"\nimage = "dev"\n\n[dev]\ninputs = ["Containerfile"]\ncontainerfile = "Containerfile"\n|needs name' \
+  'no [dev] inputs|crate = "2"\nname = "repo"\nimage = "dev"\n|needs [dev] inputs'; do
+  IFS='|' read -r what toml says <<<"$row"
+  setup
+  git push -q "$tmp/repo.git" main 2>/dev/null
+  before=$(main_of "$tmp/repo.git")
+  printf '%b' "$toml" >crate.toml
+  echo "FROM $alpine" >Containerfile
+  git add -A && git commit -qm "dev, $what"
+  out=$(git push "$tmp/repo.git" main 2>&1)
+  if [ "$(main_of "$tmp/repo.git")" = "$before" ] && grep -qF "$says" <<<"$out"; then
+    ok "image dev with $what: the push is refused, and says it $says"
+  else not_ok "image dev with $what: the push is refused, and says it $says" "$out"; fi
+done
 
 # a failed checkout: the check's checkout cannot take the pushed commit (a stale index.lock makes the real
 # `git checkout` fail), though the tree it still holds would pass. The push is refused with crate's reason, the check

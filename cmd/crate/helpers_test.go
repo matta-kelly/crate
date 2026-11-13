@@ -51,6 +51,10 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+// fixtureDeclaration declares the fixture: its name, and the template's three inputs. crate.toml is no input, so
+// the golden hash is the inputs' alone.
+const fixtureDeclaration = "name = \"que-pasa\"\n\n[dev]\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n"
+
 // the template's three inputs, each one fixed line, and one other file
 var inputFiles = map[string]string{
 	".devcontainer/devcontainer.json": "devcontainer.json fixture\n",
@@ -215,6 +219,7 @@ func newFx(t *testing.T, folder string) *fx {
 		f.write(p, c, 0o644)
 	}
 	f.write("scripts/dev-image-smoke.sh", smokeStub, 0o755)
+	f.write("crate.toml", fixtureDeclaration, 0o644)
 	f.git(f.repo, "init", "-q", "-b", "main")
 	f.git(f.repo, "add", "-A")
 	f.git(f.repo, "commit", "-qm", "init")

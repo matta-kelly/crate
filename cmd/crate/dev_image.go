@@ -13,7 +13,7 @@ import (
 
 func init() { register("dev-image", devImage) }
 
-const devImageUsage = "crate [-C <path>] dev-image <hash|ref|ensure|promote|local> [--name <name>] [--rev <commit>]"
+const devImageUsage = "crate [-C <path>] dev-image <hash|ref|ensure|promote|local> [--rev <commit>]"
 
 // buildsFromACheckout are the sub-verbs that read the working tree, so a commit alone is not enough for them.
 var buildsFromACheckout = []string{"ensure", "promote", "local"}
@@ -25,7 +25,6 @@ func devImage(args []string) error {
 	sub := args[0]
 	flags := flag.NewFlagSet("dev-image", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
-	name := flags.String("name", "", "")
 	rev := flags.String("rev", "", "")
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() > 0 {
 		return usagef("%s", devImageUsage)
@@ -44,7 +43,7 @@ func devImage(args []string) error {
 		}
 		root = "." // a bare repo holds the commit with no checkout
 	}
-	o := devimage.Options{Root: root, Name: *name, Rev: *rev, Stderr: os.Stderr}
+	o := devimage.Options{Root: root, Rev: *rev, Stderr: os.Stderr}
 
 	var result string
 	switch sub {

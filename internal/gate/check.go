@@ -162,7 +162,7 @@ func (r *Repo) image(dir string, decl declaration.Declaration, out io.Writer) (s
 	case "":
 		return "", errors.New("crate.toml names no image")
 	case "dev":
-		return devimage.Local(devimage.Options{Root: dir, Name: r.Name(), Stderr: out}, "")
+		return devimage.Local(devimage.Options{Root: dir, Stderr: out}, "")
 	default:
 		return decl.Image, nil
 	}

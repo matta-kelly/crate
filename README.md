@@ -37,7 +37,7 @@ The app, by kind:
 ## crate.toml
 
 ```toml
-name = "publicpersona"                 # the workspace's name; the repo's folder when absent
+name = "publicpersona"                 # the repo's name: its workspace's and its dev image's
 services = ".devcontainer/pod.yaml"    # the services file, or no services
 
 [tools]
@@ -86,8 +86,9 @@ under it, and systemd-oomd. crate sets no limit. It only orders and counts its o
 
 ## The dev image
 
-`crate dev-image <hash|ref|ensure|promote|local> [--name <name>] [--rev <commit>]`: one image per hash of the repo's
-`[dev] inputs`, in ghcr as `ghcr.io/matta-kelly/<name>-dev`.
+`crate dev-image <hash|ref|ensure|promote|local> [--rev <commit>]`: one image per hash of the repo's `[dev] inputs`,
+in ghcr as `ghcr.io/matta-kelly/<name>-dev` (or `[dev] image`). A repo declares `name` and `[dev] inputs`; crate
+guesses neither, and refuses a `crate.toml` that lacks one, at the gate too.
 
 - `hash`: the hash of the inputs at the commit
 - `ref`: `<image>@<digest>` of `<image>:<hash>`, else of `<image>:main`. Never builds

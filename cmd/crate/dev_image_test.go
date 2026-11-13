@@ -619,27 +619,22 @@ func TestAScaleThatIsNotAWholeNumberOfOneOrMoreIsRefusedAndNamed(t *testing.T) {
 	}
 }
 
-func TestTheImageNameFollowsItsOrder(t *testing.T) {
-	// Each row gives the image name through `ref`: the stand-in registry holds the tag under the name the row
-	// wants, so any other name finds no tag and fails. Every row has the fixture's three inputs: one hash.
+// The image name is [dev] image when the repo names one, else ghcr.io/matta-kelly/<name>-dev from crate.toml's name,
+// whatever folder the checkout is in. Each row gives the name through `ref`: the stand-in registry holds the tag
+// under the name the row wants, so any other name finds no tag and fails.
+func TestTheImageNameIsTheDeclaredOne(t *testing.T) {
 	rows := []struct {
 		name   string
 		folder string // the checkout's folder
-		toml   string // the crate.toml, or none
+		toml   string // the crate.toml, or the fixture's
 		cwd    string // "repo", "worktree" (folder x), or "bare" (a clone, que-pasa.git, asked with --rev)
-		args   []string
 		want   string
 	}{
-		{"a checkout in the folder que-pasa", "que-pasa", "", "repo", nil, "ghcr.io/matta-kelly/que-pasa-dev"},
-		{"a worktree of it in a folder x", "que-pasa", "", "worktree", nil, "ghcr.io/matta-kelly/que-pasa-dev"},
-		{"a clone in a folder work, with --name", "work", "", "repo", []string{"--name", "que-pasa"}, "ghcr.io/matta-kelly/que-pasa-dev"},
-		{"a clone in a folder work, with no name", "work", "", "repo", nil, "ghcr.io/matta-kelly/work-dev"},
-		{"crate.toml name over --name", "work", "name = \"que-pasa\"\n", "repo", []string{"--name", "other"}, "ghcr.io/matta-kelly/que-pasa-dev"},
-		{"crate.toml name over the folder", "work", "name = \"alpha\"\n", "repo", nil, "ghcr.io/matta-kelly/alpha-dev"},
-		{"--name over the folder", "work", "", "repo", []string{"--name", "beta"}, "ghcr.io/matta-kelly/beta-dev"},
-		{"name and [dev] with no image", "work", "name = \"que-pasa\"\n\n[dev]\nsmoke = \"scripts/dev-image-smoke.sh\"\n", "repo", nil, "ghcr.io/matta-kelly/que-pasa-dev"},
-		{"[dev] image over name", "work", "name = \"que-pasa\"\n\n[dev]\nimage = \"example.test/team/custom-dev\"\n", "repo", []string{"--name", "other"}, "example.test/team/custom-dev"},
-		{"a bare repo que-pasa.git with --rev", "que-pasa", "", "bare", nil, "ghcr.io/matta-kelly/que-pasa-dev"},
+		{"a checkout in a folder of its name", "que-pasa", "", "repo", "ghcr.io/matta-kelly/que-pasa-dev"},
+		{"a checkout in another folder", "work", "", "repo", "ghcr.io/matta-kelly/que-pasa-dev"},
+		{"a worktree in a folder x", "que-pasa", "", "worktree", "ghcr.io/matta-kelly/que-pasa-dev"},
+		{"a bare repo with --rev", "que-pasa", "", "bare", "ghcr.io/matta-kelly/que-pasa-dev"},
+		{"[dev] image over name", "work", "name = \"que-pasa\"\n\n[dev]\nimage = \"example.test/team/custom-dev\"\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n", "repo", "example.test/team/custom-dev"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -649,16 +644,13 @@ func TestTheImageNameFollowsItsOrder(t *testing.T) {
 			}
 			f.inRegistry(row.want+":"+goldenHash, 7)
 			cwd := f.repo
-			args := append([]string{"dev-image", "ref"}, row.args...)
+			args := []string{"dev-image", "ref"}
 			switch row.cwd {
 			case "worktree":
 				cwd = filepath.Join(f.dir, "x")
 				f.git(f.repo, "worktree", "add", "-q", "-b", "wt", cwd)
 			case "bare":
 				cwd = filepath.Join(f.dir, "que-pasa.git")
-				if row.folder != "que-pasa" {
-					t.Fatal("the bare row clones into que-pasa.git beside the fixture")
-				}
 				f.git(f.dir, "clone", "-q", "--bare", f.repo, cwd)
 				args = append(args, "--rev", f.git(f.repo, "rev-parse", "HEAD"))
 			}
@@ -670,11 +662,34 @@ func TestTheImageNameFollowsItsOrder(t *testing.T) {
 	}
 }
 
-func TestLocalTakesTheNameFlag(t *testing.T) {
-	f := newFx(t, "work")
-	r := f.dev(nil, "local", "--name", "que-pasa")
-	if want := image + ":" + goldenHash + "\n"; r.code != 0 || r.out != want {
-		t.Errorf("expected exit 0 and %q, got %s", want, r)
+// A repo declares its name and its inputs: crate guesses neither, and a crate.toml that lacks one is refused with
+// the key it lacks. --name is gone: an unknown flag, exit 2.
+func TestARepoThatDoesNotDeclareItselfIsRefused(t *testing.T) {
+	rows := []struct{ name, toml, says string }{
+		{"no crate.toml", "", "needs name"},
+		{"no name", "[dev]\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n", "needs name"},
+		{"no [dev]", "name = \"que-pasa\"\n", "needs [dev] inputs"},
+		{"[dev] with no inputs", "name = \"que-pasa\"\n\n[dev]\nsmoke = \"scripts/dev-image-smoke.sh\"\n", "needs [dev] inputs"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			f := newFx(t, "que-pasa")
+			if row.toml == "" {
+				f.remove("crate.toml")
+			} else {
+				f.commit("crate.toml", row.toml)
+			}
+			for _, verb := range []string{"hash", "ref", "local"} {
+				r := f.dev(nil, verb)
+				if r.code != 1 || !strings.Contains(r.err, "crate: ") || !strings.Contains(r.err, row.says) {
+					t.Errorf("%s: expected exit 1 and a crate: line that says %q, got %s", verb, row.says, r)
+				}
+			}
+		})
+	}
+	f := newFx(t, "que-pasa")
+	if r := f.dev(nil, "local", "--name", "que-pasa"); r.code != 2 {
+		t.Errorf("--name: expected exit 2, an unknown flag, got %s", r)
 	}
 }
 
@@ -709,7 +724,7 @@ func TestDevInputsAreExactlyWhatTheHashCovers(t *testing.T) {
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			f := newFx(t, "que-pasa")
-			f.commit("crate.toml", "[dev]\ninputs = "+row.inputs+"\n")
+			f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\ninputs = "+row.inputs+"\n")
 			if r := f.dev(nil, "hash"); r.code != 0 || r.out != row.want+"\n" {
 				t.Errorf("expected exit 0 and %q, got %s", row.want, r)
 			}
@@ -717,7 +732,7 @@ func TestDevInputsAreExactlyWhatTheHashCovers(t *testing.T) {
 	}
 	t.Run("a file the list leaves out", func(t *testing.T) {
 		f := newFx(t, "que-pasa")
-		f.commit("crate.toml", "[dev]\ninputs = [\".devcontainer/Containerfile\", \"package-lock.json\"]\n")
+		f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\ninputs = [\".devcontainer/Containerfile\", \"package-lock.json\"]\n")
 		f.commit(".devcontainer/devcontainer.json", "changed\n")
 		if r := f.dev(nil, "hash"); r.out != goldenA+"\n" {
 			t.Errorf("the hash: expected %q to stay when an unlisted input changes, got %s", goldenA, r)
@@ -731,8 +746,8 @@ func TestDevContainerfileMustBeAnInput(t *testing.T) {
 		toml string
 		want string
 	}{
-		{"the default Containerfile", "[dev]\ninputs = [\"package-lock.json\"]\n", ".devcontainer/Containerfile"},
-		{"a named Containerfile", "[dev]\ncontainerfile = \"docker/Containerfile\"\ninputs = [\".devcontainer/Containerfile\", \"package-lock.json\"]\n", "docker/Containerfile"},
+		{"the default Containerfile", "name = \"que-pasa\"\n\n[dev]\ninputs = [\"package-lock.json\"]\n", ".devcontainer/Containerfile"},
+		{"a named Containerfile", "name = \"que-pasa\"\n\n[dev]\ncontainerfile = \"docker/Containerfile\"\ninputs = [\".devcontainer/Containerfile\", \"package-lock.json\"]\n", "docker/Containerfile"},
 	}
 	for _, row := range rows {
 		for _, verb := range []string{"hash", "local"} {
@@ -755,7 +770,7 @@ func TestDevContainerfileMustBeAnInput(t *testing.T) {
 func TestDevContainerfileIsWhatTheBuildReads(t *testing.T) {
 	f := newFx(t, "que-pasa")
 	f.commit("docker/Containerfile", "FROM scratch\n")
-	f.commit("crate.toml", "[dev]\ncontainerfile = \"docker/Containerfile\"\ninputs = [\"docker/Containerfile\", \"package-lock.json\"]\n")
+	f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\ncontainerfile = \"docker/Containerfile\"\ninputs = [\"docker/Containerfile\", \"package-lock.json\"]\n")
 	r := f.dev(nil, "local")
 	if r.code != 0 {
 		t.Fatalf("the exit: expected 0, got %s", r)
@@ -768,7 +783,7 @@ func TestDevContainerfileIsWhatTheBuildReads(t *testing.T) {
 func TestDevSmokeRunsWithTheImageAsItsArgument(t *testing.T) {
 	f := newFx(t, "que-pasa")
 	f.script("ci/own-smoke.sh", "#!/usr/bin/env bash\necho \"own-smoke $1 [$#]\" >>\"$T/calls\"\n")
-	f.commit("crate.toml", "[dev]\nsmoke = \"ci/own-smoke.sh\"\n")
+	f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\nsmoke = \"ci/own-smoke.sh\"\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n")
 	r := f.dev(nil, "local")
 	tag := image + ":" + goldenHash
 	if r.code != 0 {

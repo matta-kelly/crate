@@ -19,7 +19,6 @@ import (
 // Options says which repo and where the output of a build goes.
 type Options struct {
 	Root   string    // the checkout, or for Hash and Ref with a Rev any folder of a git repo that holds the commit
-	Name   string    // the --name flag, or ""
 	Rev    string    // the commit Hash and Ref read, or "" for HEAD
 	Stderr io.Writer // a build's, a pull's and a smoke's output
 }
@@ -33,8 +32,15 @@ func Toplevel(dir string) (string, error) {
 // RepoName is the repo's folder: the folder that holds the git common folder, the same for each worktree of
 // a checkout. A bare repo is its own folder with .git taken away.
 func RepoName(root string) (string, error) {
-	p := &plan{root: root}
-	return p.repoName()
+	out, err := git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	if err != nil {
+		return "", err
+	}
+	common := filepath.Clean(strings.TrimSpace(out))
+	if filepath.Base(common) == ".git" {
+		return filepath.Base(filepath.Dir(common)), nil
+	}
+	return strings.TrimSuffix(filepath.Base(common), ".git"), nil
 }
 
 // Hash is the hash of the inputs at the commit: 16 lowercase hex.

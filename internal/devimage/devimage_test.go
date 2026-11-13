@@ -35,7 +35,8 @@ echo "$d"
 
 const smokeStub = "#!/usr/bin/env bash\necho \"smoke $*\" >>\"$T/calls\"\n"
 
-// given: a checkout in a folder que-pasa with the three inputs and a smoke, and the stand-ins on PATH.
+// given: a checkout in a folder que-pasa with the three inputs, a smoke and a crate.toml that declares them, and the
+// stand-ins on PATH.
 func given(t *testing.T) (root, calls string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -43,6 +44,7 @@ func given(t *testing.T) (root, calls string) {
 	files := map[string]string{
 		".devcontainer/devcontainer.json": "a\n", ".devcontainer/Containerfile": "b\n", "package-lock.json": "c\n",
 		"scripts/dev-image-smoke.sh": smokeStub,
+		"crate.toml": "name = \"que-pasa\"\n\n[dev]\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n",
 	}
 	for p, c := range files {
 		full := filepath.Join(root, p)
