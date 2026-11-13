@@ -40,7 +40,7 @@ func runVerb(args []string) error {
 	if err != nil {
 		return err
 	}
-	s := w.system(system.Work, os.Stderr)
+	s := w.system(system.Work, os.Stderr, nil)
 	made, err := s.Made()
 	if err != nil {
 		return err

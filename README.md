@@ -18,7 +18,7 @@ agent and the check each ask that system whether the change works. crate also gu
 `crate [-C <checkout>] <verb>`:
 
 - `up [--attempt]`: make it, or start what stopped. A second `up` changes nothing. An attempt runs in a worktree of its
-  own, with no route
+  own, with no route. Each `up` is a run on the person's [record](#the-record)
 - `run [-e NAME]... [--] <argv...>`: run a command in the tools member, in the caller's folder. Its exit is the
   command's. Each `-e NAME` passes this shell's `NAME` by name, so a secret's value is never in argv
 - `url`: the workspace's URLs, one per line
@@ -116,7 +116,40 @@ exact tree main becomes. A land is a plain `git push`.
   declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`). crate's own version is its install's
 
 `hooks/` holds two one-line scripts that run `crate hook <name>` from the install beside them. The gate's state lives
-beside each bare repo, in `<bare>/crate`: the check's checkout, its lock, its log, and postsubmit's.
+beside each bare repo, in `<bare>/crate`: the check's checkout, its lock, its [record](#the-record), and postsubmit's.
+
+## The record
+
+crate's record of what it did and how long each part took: one JSON line per step of a run, appended as the step
+ends, and a total line when the run ends. A run is one thing crate does: a check, a postsubmit, an `up`, a copy to
+GitHub (mirror) or a release.
+
+- the files
+  - the gate: `<bare>/crate/log.jsonl`, each check, postsubmit, mirror and release of that repo
+  - a person: `$XDG_STATE_HOME/crate/log.jsonl` (`~/.local/state` when unset), each `up` of that user
+- the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass`, `fail`, or
+  `refused` for a push refused before its check), `note` (why it failed, or what: the image's `stored`, `pulled` or
+  `built`, a version, `reverted by <sha>`)
+- the steps, in order; a step that does not run writes no line
+  - `lock`: the wait for the repo's lock, one check at a time
+  - `image`: the dev image on this machine
+  - `hold`: the wait for a slot on the machine
+  - `services`, `tools`, `setup` (a new tools member only)
+  - `build`, `needs`: the built app and the proof it refuses without its needs (a check and postsubmit)
+  - `app`: started until healthy, and its routes
+  - `check`: `scripts/check.sh`
+  - `revert`: postsubmit's revert of a red main
+  - `total`: the run, its result the run's
+- the summary: one line at the end of a run, in its output (the push, postsubmit's log, `up`'s stderr):
+  `crate: lock 0s, image 2s (stored), hold 0s, tools 1s, setup 61s, build 140s, needs 3s, app 5s, check 30s; total 242s, pass`
+- a run with no total line was stopped. A line crate cannot write is dropped: the record never fails a run
+
+```sh
+# the median of each step of a repo's checks
+duckdb -c "select step, median(seconds) from '<bare>/crate/log.jsonl' where kind = 'check' group by step"
+# the last ten checks: commit, result, seconds
+jq -r 'select(.kind == "check" and .step == "total") | [.commit[:12], .result, .seconds] | @tsv' <bare>/crate/log.jsonl | tail
+```
 
 ## Changing crate
 

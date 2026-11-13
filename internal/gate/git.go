@@ -7,18 +7,20 @@
 //	release.lock       one release at a time, so two moves of main are released in order
 //	postsubmit.lock    one postsubmit at a time
 //	postsubmit/        green (the last main that passed), <sha>.log (each run's output), run.log
-//	log                one line per check, copy, release and postsubmit
+//	log.jsonl          the record: one JSON line per step of each check, postsubmit, mirror and release
 package gate
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
-	"time"
+
+	"github.com/matta-kelly/crate/internal/record"
 )
 
 // Repo is one bare repo on the server.
@@ -97,14 +99,14 @@ func (r *Repo) checkout(dir string) error {
 	return os.WriteFile(filepath.Join(dir, ".git", "objects", "info", "alternates"), []byte(filepath.Join(r.Bare, "objects")+"\n"), 0o644)
 }
 
-// log adds one line to <bare>/crate/log.
-func (r *Repo) log(format string, a ...any) {
-	f, err := os.OpenFile(r.state("log"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
+// begin starts a run of kind on commit, on the repo's record, <bare>/crate/log.jsonl. Its summary goes to out; a nil
+// out prints none.
+func (r *Repo) begin(kind, commit string, out io.Writer) *record.Run {
+	line := record.Line{Kind: kind, Repo: r.Name(), Commit: commit}
+	if kind == "check" || kind == "postsubmit" {
+		line.System = r.systemName(kind)
 	}
-	defer f.Close()
-	fmt.Fprintf(f, "%s %s\n", time.Now().UTC().Format("2006-01-02T15:04:05Z"), fmt.Sprintf(format, a...))
+	return record.Start(r.state("log.jsonl"), out, line)
 }
 
 // lock takes the lock file name, waiting for it. The lock is freed when the process ends, or by the func it gives.
@@ -145,10 +147,11 @@ func (r *Repo) CopyMain(commit string) error {
 	if !r.hasGithub() {
 		return nil
 	}
+	rec := r.begin("mirror", commit, nil)
 	if _, err := r.git("push", "-q", "github", commit+":refs/heads/main"); err != nil {
-		r.log("mirror %s %s fail", r.Name(), short(commit))
+		rec.End(record.Fail, err.Error())
 		return err
 	}
-	r.log("mirror %s %s pass", r.Name(), short(commit))
+	rec.End(record.Pass, "")
 	return nil
 }

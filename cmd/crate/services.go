@@ -18,5 +18,5 @@ func servicesVerb(args []string) error {
 	if err != nil {
 		return err
 	}
-	return w.system(system.Work, os.Stderr).Services()
+	return w.system(system.Work, os.Stderr, nil).Services()
 }

@@ -1,10 +1,13 @@
 package gate
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"github.com/matta-kelly/crate/internal/record"
 )
 
 // Postsubmit: the slow sets, too slow to hold a land, run on each new main after it moves. crate.toml's postsubmit
@@ -44,7 +47,7 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 		b, _ := r.git("rev-parse", green+"^{tree}")
 		if a == b {
 			r.setGreen(main)
-			r.log("postsubmit %s %s pass: the tree of green %s", r.Name(), short(main), short(green))
+			r.begin("postsubmit", main, nil).End(record.Pass, "the tree of green "+short(green))
 			return nil
 		}
 	}
@@ -59,21 +62,31 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	r.log("postsubmit %s %s start", r.Name(), short(main))
-	err = r.run("postsubmit", dir, decl, seconds(decl.PostsubmitTimeout, 3600), nil, strings.Fields(decl.Postsubmit), logFile)
-	logFile.Close()
+	rec := r.begin("postsubmit", main, logFile)
+	err = r.run(rec, "postsubmit", dir, decl, seconds(decl.PostsubmitTimeout, 3600), nil, strings.Fields(decl.Postsubmit), logFile)
 	if err == nil {
+		rec.End(record.Pass, "")
+		logFile.Close()
 		r.setGreen(main)
-		r.log("postsubmit %s %s pass", r.Name(), short(main))
 		r.Release(main, out)
 		return nil
 	}
-	r.log("postsubmit %s %s fail", r.Name(), short(main))
 	if green == "" {
-		r.log("postsubmit %s %s not reverted: no green main to go back to", r.Name(), short(main))
+		rec.End(record.Fail, "not reverted: no green main to go back to")
+		logFile.Close()
 		return ErrRefused
 	}
-	return r.revertSince(green, main, path)
+	logFile.Close()
+	step := rec.Step(record.Revert)
+	head, err := r.revertSince(green, main, path)
+	if err != nil {
+		step.End(err, "")
+		rec.End(record.Fail, "not reverted: "+err.Error())
+		return ErrRefused
+	}
+	step.End(nil, head)
+	rec.End(record.Fail, "reverted by "+head)
+	return ErrRefused
 }
 
 func (r *Repo) setGreen(commit string) {
@@ -81,8 +94,9 @@ func (r *Repo) setGreen(commit string) {
 }
 
 // revertSince makes one commit on main that undoes green..red, landed through the check like any push, with the
-// failure's last lines in its message. When main moved meanwhile, it goes again on the new main, three times.
-func (r *Repo) revertSince(green, red, path string) error {
+// failure's last lines in its message, and returns it. When main moved meanwhile, it goes again on the new main,
+// three times.
+func (r *Repo) revertSince(green, red, path string) (string, error) {
 	dir := r.state("post")
 	author, _ := r.git("log", "-1", "--format=%an <%ae>", red)
 	count, _ := r.git("rev-list", "--count", green+".."+red)
@@ -91,28 +105,25 @@ func (r *Repo) revertSince(green, red, path string) error {
 		count, short(green), short(red), commits, path, tail(path, 30))
 	host, _ := os.Hostname()
 	ident := []string{"-c", "user.name=crate", "-c", "user.email=crate@" + host}
+	noApply := errors.New("the revert does not apply; it needs a hand")
 	for tries := 0; tries < 3; tries++ {
 		_, _ = work(dir, "checkout", "-q", "-f", "--detach", r.main())
 		if _, err := work(dir, append(ident, "revert", "--no-commit", green+".."+red)...); err != nil {
 			_, _ = work(dir, "revert", "--abort")
-			r.log("postsubmit %s %s not reverted: the revert does not apply; it needs a hand", r.Name(), short(red))
-			return ErrRefused
+			return "", noApply
 		}
 		if _, err := work(dir, append(ident, "commit", "-q", "--author="+author, "-m", message)...); err != nil {
 			_, _ = work(dir, "revert", "--abort")
-			r.log("postsubmit %s %s not reverted: the revert does not apply; it needs a hand", r.Name(), short(red))
-			return ErrRefused
+			return "", noApply
 		}
 		pushed, err := work(dir, "push", "-q", r.Bare, "HEAD:refs/heads/main")
 		appendTo(path, pushed)
 		if err == nil {
 			head, _ := work(dir, "rev-parse", "--short=12", "HEAD")
-			r.log("postsubmit %s %s reverted by %s", r.Name(), short(red), head)
-			return nil
+			return head, nil
 		}
 	}
-	r.log("postsubmit %s %s not reverted: main kept moving, or the revert's check failed", r.Name(), short(red))
-	return ErrRefused
+	return "", errors.New("main kept moving, or the revert's check failed")
 }
 
 func tail(path string, n int) string {

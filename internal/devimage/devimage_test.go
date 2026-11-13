@@ -13,14 +13,14 @@ import (
 )
 
 // A stand-in podman and skopeo first on PATH. Each appends its arguments as one line to $T/calls. The registry
-// ($T/registry) and the store ($T/local) start empty, so a build is needed.
+// ($T/registry) and the store ($T/local) start empty, so a build is needed. A pull fails unless $PULLS is set.
 const podmanStub = `#!/usr/bin/env bash
 echo "podman $*" >>"$T/calls"
 case $1 in
 build) tag=; while [ $# -gt 0 ]; do [ "$1" = -t ] && tag=$2; shift; done; echo "$tag" >>"$T/local" ;;
 tag) echo "$3" >>"$T/local" ;;
 push) echo "$2 sha256:$(echo "$2" | sha256sum | cut -c1-64)" >>"$T/registry" ;;
-pull) exit 1 ;;
+pull) [ -n "$PULLS" ] || exit 1; echo "$2" >>"$T/local" ;;
 image) case $2 in exists) grep -qxF -- "$3" "$T/local" ;; esac ;;
 esac
 `
@@ -111,7 +111,10 @@ func TestTheBuildTakesItsPlacementFromItsCaller(t *testing.T) {
 	verbs := []struct {
 		name string
 		do   func(o devimage.Options, p machine.Placement) (string, error)
-	}{{"Local", devimage.Local}, {"Ensure", devimage.Ensure}}
+	}{{"Local", func(o devimage.Options, p machine.Placement) (string, error) {
+		tag, _, err := devimage.Local(o, p)
+		return tag, err
+	}}, {"Ensure", devimage.Ensure}}
 	for _, verb := range verbs {
 		for _, row := range rows {
 			t.Run(verb.name+" with "+row.name, func(t *testing.T) {
@@ -131,6 +134,23 @@ func TestTheBuildTakesItsPlacementFromItsCaller(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Local says how it got the image: a build when nothing has it, the machine's copy after, a pull when the registry
+// has it.
+func TestLocalSaysWhereTheImageCameFrom(t *testing.T) {
+	root, _ := given(t)
+	o := devimage.Options{Root: root, Stderr: &bytes.Buffer{}}
+	for _, want := range []devimage.Source{devimage.Built, devimage.Stored} {
+		if _, got, err := devimage.Local(o, ""); err != nil || got != want {
+			t.Errorf("expected %q, got %q, %v", want, got, err)
+		}
+	}
+	root, _ = given(t)
+	t.Setenv("PULLS", "1")
+	if _, got, err := devimage.Local(devimage.Options{Root: root, Stderr: &bytes.Buffer{}}, ""); err != nil || got != devimage.Pulled {
+		t.Errorf("expected %q, got %q, %v", devimage.Pulled, got, err)
 	}
 }
 

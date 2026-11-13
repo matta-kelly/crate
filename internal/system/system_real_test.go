@@ -21,6 +21,7 @@ import (
 
 	"github.com/matta-kelly/crate/internal/machine/machinetest"
 	"github.com/matta-kelly/crate/internal/system"
+	"github.com/matta-kelly/crate/internal/record"
 )
 
 const (
@@ -49,6 +50,7 @@ type worldOpts struct {
 	AppFiles   map[string]string // files the app needs, by path in the checkout
 	Busybox    bool          // the dev image is busybox, which has httpd and wget
 	Router     system.Router // a person's workspace's router
+	Record     *record.Run   // the run that records the steps
 }
 
 type world struct {
@@ -143,6 +145,7 @@ inputs = [".devcontainer/Containerfile", "package-lock.json"]
 		Keep:     o.Keep,
 		Out:      &w.out,
 		Router:   o.Router,
+		Record:   o.Record,
 	})
 	t.Cleanup(func() {
 		_ = w.sys.Remove(nil)

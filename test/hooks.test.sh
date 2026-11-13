@@ -46,6 +46,12 @@ SH
 
 main_of() { git -C "$1" rev-parse --verify -q refs/heads/main || echo none; }
 
+# steps: the steps of the repo's last run of kind, each step:result, from its record.
+steps() {
+  jq -r -s --arg k "$1" '[.[] | select(.kind == $k)] | (last.run) as $r | map(select(.run == $r) | "\(.step):\(.result)") | join(" ")' \
+    "$tmp/repo.git/crate/log.jsonl" 2>/dev/null
+}
+
 # a green push moves main, and the first push has no base
 setup
 out=$(git push -q origin 2>&1; git push "$tmp/repo.git" main 2>&1)
@@ -57,6 +63,16 @@ else not_ok "a green push moves main" "$out"; fi
 if [ "$(main_of "$tmp/github.git")" = "$(git rev-parse HEAD)" ]; then ok "main is copied to github"
 else not_ok "main is copied to github"; fi
 
+# the check is a run on the repo's record, each step timed, and its summary is in the push's output
+want="lock:pass image:pass hold:pass tools:pass check:pass total:pass"
+if [ "$(steps check)" = "$want" ] && [ "$(steps mirror)" = "total:pass" ] &&
+  grep -q "crate: lock [0-9]*s, image [0-9]*s, hold .*, check [0-9]*s; total [0-9]*s, pass" <<<"$out" &&
+  [ ! -e "$tmp/repo.git/crate/log" ]; then
+  ok "the check and the copy are runs on the record, and the push shows the check's summary"
+else not_ok "the check and the copy are runs on the record, and the push shows the check's summary" "check: $(steps check)
+mirror: $(steps mirror)
+$out"; fi
+
 # a red push is refused with its output, and main has not moved
 before=$(main_of "$tmp/repo.git")
 echo fail >verdict && git commit -qam red
@@ -65,6 +81,9 @@ if [ "$(main_of "$tmp/repo.git")" = "$before" ] && grep -q "check failed at: ver
   grep -q "base=$before" <<<"$out"; then
   ok "a red push is refused with its output, checked against the old main"
 else not_ok "a red push is refused with its output, checked against the old main" "$out"; fi
+if [ "$(steps check)" = "lock:pass image:pass hold:pass tools:pass check:fail total:fail" ]; then
+  ok "a red check's record names the step that failed"
+else not_ok "a red check's record names the step that failed" "$(steps check)"; fi
 
 # a green push after a refused one still checks: the checkout recovered from the lost objects
 echo pass >verdict && git commit -qam green
@@ -105,11 +124,10 @@ git -C "$tmp/second" push "$tmp/repo.git" main >"$tmp/b.out" 2>&1 &
 b=$!
 wait $a; ra=$?
 wait $b; rb=$?
-starts=$(grep -c "start" "$tmp/repo.git/crate/log")
-order=$(grep ' check ' "$tmp/repo.git/crate/log" | tail -2 | awk '{print $NF}' | tr '\n' ' ')
-if [ $ra -eq 0 ] && [ $rb -ne 0 ] && grep -q "main moved" "$tmp/b.out" && [ "$order" = "start pass " ]; then
+order=$(jq -r -s '[.[] | select(.kind == "check" and .step == "total")] | .[-2:] | map(.result + "/" + (.note // "" | split(" ")[0:2] | join(" "))) | join(" ")' "$tmp/repo.git/crate/log.jsonl")
+if [ $ra -eq 0 ] && [ $rb -ne 0 ] && grep -q "main moved" "$tmp/b.out" && [ "$order" = "pass/ refused/main moved" ]; then
   ok "two pushes at once: one lands, the other waits and is told main moved"
-else not_ok "two pushes at once: one lands, the other waits and is told main moved" "a=$ra b=$rb starts=$starts order=$order
+else not_ok "two pushes at once: one lands, the other waits and is told main moved" "a=$ra b=$rb order=$order
 $(cat "$tmp/a.out" "$tmp/b.out")"; fi
 
 # a check past its limit is stopped, the push refused, and the next push is not held by it

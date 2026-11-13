@@ -18,6 +18,7 @@ import (
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
+	"github.com/matta-kelly/crate/internal/record"
 )
 
 // The four kinds of a system, as the machine names them.
@@ -44,8 +45,9 @@ type Spec struct {
 	Env      []string
 	Keep     []string
 	Out      io.Writer
-	Router   Router // a person's workspace's routes; nil for none
-	Image    string // the tools member's image when the caller has one; "" for the repo's dev image
+	Router   Router      // a person's workspace's routes; nil for none
+	Image    string      // the tools member's image when the caller has one; "" for the repo's dev image
+	Record   *record.Run // the run that records Hold's, Image's and Up's steps; nil for none
 }
 
 // System is a system of one name on one machine.
@@ -70,10 +72,12 @@ func (s *System) Made() (bool, error) {
 }
 
 // Hold waits for the system's slot on its machine, bounded by limit.Hold.
-func (s *System) Hold() error {
+func (s *System) Hold() (err error) {
 	if err := CheckName(s.spec.Name); err != nil {
 		return err
 	}
+	step := s.spec.Record.Step(record.Hold)
+	defer func() { step.End(err, "") }()
 	type held struct {
 		slot machine.Slot
 		err  error
@@ -110,11 +114,14 @@ func (s *System) Image() error {
 		s.image = s.spec.Image
 		return nil
 	}
+	step := s.spec.Record.Step(record.Image)
 	placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
 	if err != nil {
+		step.End(err, "")
 		return err
 	}
-	tag, err := devimage.Local(devimage.Options{Root: s.spec.Checkout, Stderr: s.out()}, placement)
+	tag, source, err := devimage.Local(devimage.Options{Root: s.spec.Checkout, Stderr: s.out()}, placement)
+	step.End(err, string(source))
 	if err != nil {
 		return err
 	}
@@ -156,6 +163,42 @@ func (s *System) Up(ctx context.Context) (err error) {
 		}
 	}()
 
+	step := s.spec.Record.Step(record.Services)
+	if err := s.network(ctx); err != nil {
+		step.End(err, "")
+		return err
+	}
+	if s.slot != nil && !s.bound {
+		s.slot.Bind()
+		s.bound = true
+	}
+	err = s.play(ctx, services, false)
+	if len(services) > 0 || err != nil {
+		step.End(err, "")
+	}
+	if err != nil {
+		return err
+	}
+
+	step = s.spec.Record.Step(record.Tools)
+	created, err := s.tools(ctx, decl, folders)
+	step.End(err, "")
+	if err != nil {
+		return err
+	}
+	if created && decl.Tools.Setup != "" {
+		step = s.spec.Record.Step(record.Setup)
+		err := s.setup(ctx, decl.Tools.Setup)
+		step.End(err, "")
+		if err != nil {
+			return err
+		}
+	}
+	return s.app(ctx, decl, folders)
+}
+
+// network makes the system's network when it is not there. An attempt's has no way out.
+func (s *System) network(ctx context.Context) error {
 	made, err := s.networkExists(ctx)
 	if err != nil {
 		return err
@@ -170,24 +213,7 @@ func (s *System) Up(ctx context.Context) (err error) {
 			return err
 		}
 	}
-	if s.slot != nil && !s.bound {
-		s.slot.Bind()
-		s.bound = true
-	}
-
-	if err := s.play(ctx, services, false); err != nil {
-		return err
-	}
-	created, err := s.tools(ctx, decl, folders)
-	if err != nil {
-		return err
-	}
-	if created && decl.Tools.Setup != "" {
-		if err := s.setup(ctx, decl.Tools.Setup); err != nil {
-			return err
-		}
-	}
-	return s.app(ctx, decl, folders)
+	return nil
 }
 
 // Run runs argv in the tools member, with each of env, a name, given the caller's value of it (podman exec -e NAME).

@@ -61,7 +61,7 @@ func devImage(args []string) error {
 		if sub == "ensure" {
 			result, err = devimage.Ensure(o, placement)
 		} else {
-			result, err = devimage.Local(o, placement)
+			result, _, err = devimage.Local(o, placement)
 		}
 	}
 	if err != nil {

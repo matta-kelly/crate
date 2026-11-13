@@ -18,5 +18,5 @@ func downVerb(args []string) error {
 	if err != nil {
 		return err
 	}
-	return w.system(system.Work, os.Stderr).Remove(nil)
+	return w.system(system.Work, os.Stderr, nil).Remove(nil)
 }

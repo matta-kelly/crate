@@ -13,6 +13,7 @@ import (
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
+	"github.com/matta-kelly/crate/internal/record"
 	"github.com/matta-kelly/crate/internal/router"
 )
 
@@ -47,26 +48,21 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 	var spec member.Spec
 	switch {
 	case s.built() && a.Build != "":
+		if missing := missingNeeds(a.Needs, a.Env, nil); len(missing) > 0 {
+			return fmt.Errorf("app: [app] needs %s; [app] env does not give them", strings.Join(missing, ", "))
+		}
 		placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
 		if err != nil {
 			return err
 		}
-		build := []string{"build", "-f", filepath.Join(s.spec.Checkout, a.Build), "-t", s.appName()}
-		if placement != "" {
-			build = append(build, "--cgroup-parent="+string(placement))
-		}
-		build = append(build, s.spec.Checkout)
-		buildCtx, cancel := context.WithTimeout(ctx, limit.Build())
-		_, err = s.call(buildCtx, build...)
-		cancel()
-		if err != nil {
-			return fmt.Errorf("app: the build of %s: %w", a.Build, err)
-		}
-		if missing := missingNeeds(a.Needs, a.Env, nil); len(missing) > 0 {
-			return fmt.Errorf("app: [app] needs %s; [app] env does not give them", strings.Join(missing, ", "))
+		if err := s.build(ctx, a.Build, placement); err != nil {
+			return err
 		}
 		if len(a.Needs) > 0 {
-			if err := s.refuses(ctx, a, placement); err != nil {
+			step := s.spec.Record.Step(record.Needs)
+			err := s.refuses(ctx, a, placement)
+			step.End(err, "")
+			if err != nil {
 				return err
 			}
 		}
@@ -107,6 +103,31 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 		return nil
 	}
 
+	step := s.spec.Record.Step(record.App)
+	err := s.start(ctx, spec, a)
+	step.End(err, "")
+	return err
+}
+
+// build makes the app's image from its Dockerfile, in placement, within limit.Build.
+func (s *System) build(ctx context.Context, dockerfile string, placement machine.Placement) (err error) {
+	step := s.spec.Record.Step(record.Build)
+	defer func() { step.End(err, "") }()
+	build := []string{"build", "-f", filepath.Join(s.spec.Checkout, dockerfile), "-t", s.appName()}
+	if placement != "" {
+		build = append(build, "--cgroup-parent="+string(placement))
+	}
+	build = append(build, s.spec.Checkout)
+	buildCtx, cancel := context.WithTimeout(ctx, limit.Build())
+	defer cancel()
+	if _, err := s.call(buildCtx, build...); err != nil {
+		return fmt.Errorf("app: the build of %s: %w", dockerfile, err)
+	}
+	return nil
+}
+
+// start runs the app's member unless it runs already, waits for its health, and adds a person's routes.
+func (s *System) start(ctx context.Context, spec member.Spec, a declaration.App) error {
 	made, err := s.containerExists(ctx, spec.Name)
 	if err != nil {
 		return err

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/matta-kelly/crate/internal/limit"
+	"github.com/matta-kelly/crate/internal/record"
 	"github.com/matta-kelly/crate/internal/system"
 )
 
@@ -29,7 +30,17 @@ func up(args []string) error {
 	if *attempt {
 		kind = system.Attempt
 	}
-	s := w.system(kind, os.Stderr)
+	rec := record.Start(record.Person(), os.Stderr, record.Line{Kind: kind, Repo: w.repo, System: w.name, Commit: w.head()})
+	err = upRecorded(w.system(kind, os.Stderr, rec))
+	if err != nil {
+		rec.End(record.Fail, err.Error())
+	} else {
+		rec.End(record.Pass, "")
+	}
+	return err
+}
+
+func upRecorded(s *system.System) error {
 	if err := s.Hold(); err != nil {
 		return err
 	}

@@ -5,6 +5,7 @@ package system_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -13,11 +14,14 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/matta-kelly/crate/internal/devimage"
 	"github.com/matta-kelly/crate/internal/machine/machinetest"
+	"github.com/matta-kelly/crate/internal/record"
 	"github.com/matta-kelly/crate/internal/router"
 	"github.com/matta-kelly/crate/internal/system"
 )
@@ -185,6 +189,44 @@ func TestACheckProvesTheBuiltAppRefusesWithoutItsNeeds(t *testing.T) {
 		t.Fatalf("Remove: %v", err)
 	}
 	w.mustLeaveNothing()
+}
+
+// A check records each step it takes, in order, on its run: one JSON line each, the image's saying where it came
+// from.
+func TestACheckRecordsEachStepInOrder(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	rec := record.Start(path, nil, record.Line{Kind: system.Check})
+	o := needsApp(`SECRET = "test-value"`, guarded)
+	o.Services = true
+	o.Setup = "true"
+	o.Record = rec
+	w := newWorld(t, o)
+	w.up()
+	rec.End(record.Pass, "")
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var steps []string
+	for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var line record.Line
+		if err := json.Unmarshal([]byte(l), &line); err != nil {
+			t.Fatalf("not a JSON line: %q", l)
+		}
+		steps = append(steps, line.Step+":"+line.Result)
+		if line.Step == record.Image && line.Note != string(devimage.Stored) {
+			t.Errorf("the image step: expected the note %q, got %q", devimage.Stored, line.Note)
+		}
+	}
+	want := "hold:pass image:pass services:pass tools:pass setup:pass build:pass needs:pass app:pass total:pass"
+	if got := strings.Join(steps, " "); got != want {
+		t.Errorf("expected the steps %q, got %q", want, got)
+	}
+	if err := w.sys.Remove(nil); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
 }
 
 // A built app that does not hold to its needs fails the check, with what it did and its output. These shorten

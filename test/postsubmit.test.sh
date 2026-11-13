@@ -46,13 +46,17 @@ CHECK
   settle
 }
 
+# has: some line of the repo's record holds to the jq condition.
+has() { jq -s -e "any(.[]; $1)" "$tmp/repo.git/crate/log.jsonl" >/dev/null 2>&1; }
+record() { cat "$tmp/repo.git/crate/log.jsonl" 2>/dev/null; }
+
 # settle: wait until no postsubmit runs for this repo and main has a postsubmit verdict, for at most a minute.
 settle() {
 
   for _ in $(seq 1 120); do
     if ! pgrep -f "crate postsubmit $tmp/repo.git" >/dev/null &&
       [ "$(cat "$tmp/repo.git/crate/postsubmit/green" 2>/dev/null)" = "$(git -C "$tmp/repo.git" rev-parse main)" ] ||
-      grep -q "not reverted" "$tmp/repo.git/crate/log" 2>/dev/null && ! pgrep -f "crate postsubmit $tmp/repo.git" >/dev/null; then
+      has '.step == "total" and (.note // "" | startswith("not reverted"))' && ! pgrep -f "crate postsubmit $tmp/repo.git" >/dev/null; then
       return 0
     fi
     sleep 0.5
@@ -69,9 +73,16 @@ if grep -q "postsubmit runs .* in the background" <<<"$out" && ! git -C "$tmp/re
   ok "a land does not wait for postsubmit, and is not released before it passes"
 else not_ok "a land does not wait for postsubmit, and is not released before it passes" "$out"; fi
 settle
-if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "postsubmit repo .* pass$" "$tmp/repo.git/crate/log"; then
+head=$(git rev-parse HEAD)
+if [ "$(main_of "$tmp/repo.git")" = "$head" ] &&
+  has ".kind == \"postsubmit\" and .commit == \"$head\" and .step == \"total\" and .result == \"pass\""; then
   ok "a green postsubmit leaves main as it is"
-else not_ok "a green postsubmit leaves main as it is" "$(cat "$tmp/repo.git/crate/log")"; fi
+else not_ok "a green postsubmit leaves main as it is" "$(record)"; fi
+if has ".kind == \"postsubmit\" and .commit == \"$head\" and .step == \"check\" and .seconds >= 0" &&
+  has ".kind == \"release\" and .commit == \"$head\" and .note == \"v0.1.1\"" &&
+  grep -q "^crate: .*; total [0-9]*s, pass$" "$tmp/repo.git/crate/postsubmit/${head:0:12}.log"; then
+  ok "postsubmit and its release are runs on the record, with the summary in its log"
+else not_ok "postsubmit and its release are runs on the record, with the summary in its log" "$(record)"; fi
 if [ "$(git -C "$tmp/repo.git" rev-parse -q --verify 'v0.1.1^{commit}')" = "$(git rev-parse HEAD)" ] &&
   git -C "$tmp/github.git" rev-parse -q --verify v0.1.1 >/dev/null; then
   ok "a green postsubmit releases the main it tested"
@@ -87,7 +98,11 @@ now=$(main_of "$tmp/repo.git")
 if [ "$now" != "$red" ] && [ "$(git -C "$tmp/repo.git" rev-parse "$now^")" = "$red" ] &&
   [ "$(git -C "$tmp/repo.git" rev-parse "$now^{tree}")" = "$(git rev-parse "$good^{tree}")" ]; then
   ok "a red postsubmit reverts the land on main, as a new commit"
-else not_ok "a red postsubmit reverts the land on main, as a new commit" "$(cat "$tmp/repo.git/crate/log")"; fi
+else not_ok "a red postsubmit reverts the land on main, as a new commit" "$(record)"; fi
+if has ".kind == \"postsubmit\" and .commit == \"$red\" and .step == \"revert\" and .result == \"pass\"" &&
+  has ".kind == \"postsubmit\" and .commit == \"$red\" and .step == \"total\" and .result == \"fail\" and (.note | startswith(\"reverted by \"))"; then
+  ok "a red postsubmit's record holds its revert"
+else not_ok "a red postsubmit's record holds its revert" "$(record)"; fi
 msg=$(git -C "$tmp/repo.git" log -1 --format=%B "$now")
 if grep -q "^revert: 1 commits, red in postsubmit" <<<"$msg" && grep -q "slow failed at: slow" <<<"$msg" &&
   grep -q "slow failed at: slow" "$tmp/repo.git/crate/postsubmit/${red:0:12}.log"; then
@@ -98,9 +113,10 @@ if [ "$(git -C "$tmp/repo.git" tag --sort=v:refname | tr '\n' ' ')" = "v0.1.0 v0
 else not_ok "a red land makes no version" "$(git -C "$tmp/repo.git" tag)"; fi
 if [ "$(main_of "$tmp/github.git")" = "$now" ]; then ok "the revert is copied to github"
 else not_ok "the revert is copied to github"; fi
-if [ "$(cat "$tmp/repo.git/crate/postsubmit/green")" = "$now" ] && grep -q "pass: the tree of green" "$tmp/repo.git/crate/log"; then
+if [ "$(cat "$tmp/repo.git/crate/postsubmit/green")" = "$now" ] &&
+  has ".kind == \"postsubmit\" and .commit == \"$now\" and .step == \"total\" and (.note | startswith(\"the tree of green\"))"; then
   ok "the revert itself passes postsubmit with no run: its tree is green's"
-else not_ok "the revert itself passes postsubmit with no run: its tree is green's" "$(cat "$tmp/repo.git/crate/log")"; fi
+else not_ok "the revert itself passes postsubmit with no run: its tree is green's" "$(record)"; fi
 
 # the next land after a revert is tested and released as usual
 git fetch -q "$tmp/repo.git" main && git reset -q --hard "$now"
@@ -109,7 +125,7 @@ git push -q "$tmp/repo.git" main 2>/dev/null
 settle
 if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && git -C "$tmp/repo.git" rev-parse -q --verify v0.1.2 >/dev/null; then
   ok "a green land after a revert stays and is released"
-else not_ok "a green land after a revert stays and is released" "$(cat "$tmp/repo.git/crate/log")"; fi
+else not_ok "a green land after a revert stays and is released" "$(record)"; fi
 
 echo "1..$n"
 exit "$failed"

@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -145,7 +146,8 @@ func (w *ws) runEnv(cwd string, env []string, args ...string) (result, error) {
 	cmd.Dir = cwd
 	cmd.Env = append(filterEnv(os.Environ(), "CRATE_MACHINE", "CONTAINER_HOST", "CRATE_LIMIT_SCALE"),
 		"PATH="+os.Getenv("PATH"),
-		"CRATE_MACHINE="+filepath.Join(w.dir, "no-machine.toml"))
+		"CRATE_MACHINE="+filepath.Join(w.dir, "no-machine.toml"),
+		"XDG_STATE_HOME="+filepath.Join(w.dir, "state"))
 	cmd.Env = append(cmd.Env, env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -320,6 +322,50 @@ func TestRunPassesTheHostsEnvByName(t *testing.T) {
 	r, err = w.run(w.root, "run", "-e", "CRATE_TEST_UNSET", "sh", "-c", "echo ran")
 	if err != nil || r.code == 0 || !strings.Contains(r.err, "CRATE_TEST_UNSET is not set") || strings.Contains(r.out, "ran") {
 		t.Errorf("run -e of an unset name: expected a refusal that names it, and nothing run, got %v %s", err, r)
+	}
+}
+
+// --- the record ---
+
+// up is a run on the person's record: a JSON line per step it took and a total, and its summary on stderr. A
+// second up finds the tools member made, so it takes no setup.
+func TestUpRecordsItsRun(t *testing.T) {
+	t.Parallel()
+	w := newWs(t, "")
+	first := w.mustRun(w.root, "up")
+	second := w.mustRun(w.root, "up")
+	data, err := os.ReadFile(filepath.Join(w.dir, "state", "crate", "log.jsonl"))
+	if err != nil {
+		t.Fatalf("the record: %v", err)
+	}
+	runs := map[string][]string{}
+	var order []string
+	for _, l := range lines(string(data)) {
+		var line struct{ Run, Kind, Repo, System, Commit, Step, Result, Note string }
+		if err := json.Unmarshal([]byte(l), &line); err != nil {
+			t.Fatalf("not a JSON line: %q", l)
+		}
+		if line.Kind != "work" || line.System != w.name || line.Repo == "" || len(line.Commit) != 40 {
+			t.Errorf("a line lost the run's fields: %q", l)
+		}
+		if _, seen := runs[line.Run]; !seen {
+			order = append(order, line.Run)
+		}
+		runs[line.Run] = append(runs[line.Run], line.Step+":"+line.Result)
+	}
+	if len(order) != 2 {
+		t.Fatalf("expected two runs, got %d:\n%s", len(order), data)
+	}
+	if got, want := strings.Join(runs[order[0]], " "), "hold:pass image:pass services:pass tools:pass setup:pass total:pass"; got != want {
+		t.Errorf("the first up: expected %q, got %q", want, got)
+	}
+	if got, want := strings.Join(runs[order[1]], " "), "hold:pass image:pass services:pass tools:pass total:pass"; got != want {
+		t.Errorf("the second up: expected %q, got %q", want, got)
+	}
+	for _, r := range []result{first, second} {
+		if !strings.Contains(r.err, "crate: hold ") || !strings.Contains(r.err, "; total ") {
+			t.Errorf("up: expected its summary on stderr, got %q", r.err)
+		}
 	}
 }
 

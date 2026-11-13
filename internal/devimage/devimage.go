@@ -124,26 +124,40 @@ func Promote(o Options) (string, error) {
 	return p.refOf(hash)
 }
 
-// Local puts <image>:<hash> in this machine's store and returns the tag: the machine's copy, else a pull,
-// else a build and a smoke with no push. The build runs in placement.
-func Local(o Options, placement machine.Placement) (string, error) {
+// Source is how Local got the image: the machine's copy, a pull, or a build.
+type Source string
+
+const (
+	Stored Source = "stored"
+	Pulled Source = "pulled"
+	Built  Source = "built"
+)
+
+// Local puts <image>:<hash> in this machine's store and returns the tag and how it got there: the machine's copy,
+// else a pull, else a build and a smoke with no push. The build runs in placement.
+func Local(o Options, placement machine.Placement) (string, Source, error) {
 	p, hash, err := openAtHash(o)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	tag := p.image + ":" + hash
 	present, err := p.stored(tag)
-	if err != nil || present {
-		return tag, err
+	if err != nil {
+		return tag, "", err
 	}
+	if present {
+		return tag, Stored, nil
+	}
+	source := Pulled
 	if err = p.podman("podman pull", limit.Pull(), p.stderr, "pull", tag); err != nil {
 		fmt.Fprintf(p.stderr, "crate: %v, so %s is built\n", err, tag)
 		if err = p.buildTo(tag, placement); err != nil {
-			return tag, err
+			return tag, "", err
 		}
+		source = Built
 	}
 	p.dropOlder(hash)
-	return tag, nil
+	return tag, source, nil
 }
 
 // hashTag is the shape of a dev image's tag: its inputs' hash.
