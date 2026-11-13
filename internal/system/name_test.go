@@ -7,13 +7,15 @@ import (
 	"github.com/matta-kelly/crate/internal/system"
 )
 
-// A workspace is <name>-<folder>; with no name declared, the repo's folder is the name.
+// A workspace is <name>-<folder>; in a folder of its name, or with no name declared, it is the folder alone.
 func TestANameIsTheDeclaredNameAndTheFolder(t *testing.T) {
 	rows := []struct {
 		name, declared, folder, want string
 	}{
 		{"a declared name", "que-pasa", "work", "que-pasa-work"},
-		{"no declared name", "", "que-pasa", "que-pasa-que-pasa"},
+		{"no declared name", "", "que-pasa", "que-pasa"},
+		{"a checkout in a folder of its name", "que-pasa", "que-pasa", "que-pasa"},
+		{"a name crate keeps for itself", "", "router", "router-router"},
 		{"a worktree of a checkout", "que-pasa", "try-1", "que-pasa-try-1"},
 	}
 	for _, row := range rows {

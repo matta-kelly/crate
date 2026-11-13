@@ -16,8 +16,8 @@ const (
 	Attempt    = "attempt"
 )
 
-// The names crate itself uses for a system. A workspace's name is <name>-<folder>, so a name with no "-"
-// never clashes with one.
+// The names crate itself uses for a system. A workspace is never one of them: in a folder of these names it keeps
+// its <name>-<folder> (system.Name).
 const (
 	Router = "router"
 	Build  = "build"

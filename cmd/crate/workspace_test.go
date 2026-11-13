@@ -217,7 +217,7 @@ func (w *ws) rawPodman(args ...string) (string, error) {
 
 // --- name ---
 
-// crate name prints <name>-<folder>, with the repo's folder as the name when none is declared, from inside
+// crate name prints <name>-<folder>, or the folder alone when no name is declared, from inside
 // the checkout, from below it, and from another folder with -C.
 func TestNamePrintsTheWorkspacesName(t *testing.T) {
 	rows := []struct {
@@ -225,7 +225,7 @@ func TestNamePrintsTheWorkspacesName(t *testing.T) {
 		declared string
 		want     string
 	}{
-		{"no declared name", "", "que-pasa-que-pasa"},
+		{"no declared name", "", "que-pasa"},
 		{"a declared name", "name = \"alpha\"\n", "alpha-que-pasa"},
 	}
 	for _, row := range rows {
