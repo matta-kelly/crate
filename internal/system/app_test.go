@@ -104,6 +104,9 @@ func TestACheckRunsTheBuiltAppAsProductionDoes(t *testing.T) {
 	if got := strings.TrimSpace(w.mustRun("wget", "-qO-", "http://app:8080/")); got != "built-app" {
 		t.Errorf("the tools member asks app: expected built-app, got %q", got)
 	}
+	if got := strings.ReplaceAll(strings.TrimSpace(w.mustRun("sh", "-c", `echo "$CRATE_APP_URL"; wget -qO- "$CRATE_APP_URL/"`)), "\r", ""); got != "http://"+w.name+"-app:8080\nbuilt-app" {
+		t.Errorf("the tools member asks CRATE_APP_URL: expected its URL, then built-app, got %q", got)
+	}
 	app := w.name + "-app"
 	rows := []struct{ what, format, want string }{
 		{"the user", "{{.Config.User}}", "1000:1000"},

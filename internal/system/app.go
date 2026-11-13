@@ -25,6 +25,17 @@ type Router interface {
 // appName is the app member's container, and its alias beside "app".
 func (s *System) appName() string { return s.spec.Name + "-app" }
 
+// appURL is the URL the tools member reaches the app at, by its full name and its first port, or "" when this kind
+// runs no app or the app has no port. A browser needs it: app alone is a top-level domain that Chrome sends to https
+// (the HSTS preload list).
+func (s *System) appURL(a declaration.App) string {
+	runs := (s.built() && a.Build != "") || (!s.built() && a.Command != "")
+	if !runs || len(a.Ports) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("http://%s:%d", s.appName(), a.Ports[0].Port)
+}
+
 // built says this kind runs the image that ships, not the dev server.
 func (s *System) built() bool { return s.spec.Kind == Check || s.spec.Kind == Postsubmit }
 

@@ -68,6 +68,8 @@ inputs = [".devcontainer/Containerfile", "pnpm-lock.yaml", "package.json"]
   the needs its own way: a workspace and an attempt by `[tools] env`, a check by `[app] env`, production by its
   own. A place that lacks one fails `up` and names it. A check first runs the built image without them, and passes
   only if it stops non-zero and its output names each one
+- the tools member reaches the app as `app`, and by `CRATE_APP_URL` (`http://<name>-<folder>-app:<first port>`). A
+  browser test opens `CRATE_APP_URL`: Chrome sends the top-level domain `app` to https
 - a built app needs at least one port. The dev image needs the tool `health` calls (`wget`) when the dev server runs it
 - the gate's keys: `crate`, `image`, `timeout`, `ship`, `packages`, `postsubmit`, `postsubmit_timeout` ([The gate](#the-gate))
 

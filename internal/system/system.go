@@ -377,6 +377,9 @@ func (s *System) tools(ctx context.Context, decl declaration.Declaration, folder
 		spec.Mounts = append(spec.Mounts, member.Mount{Source: mount.Path, Target: mount.Path, ReadOnly: true})
 	}
 	spec.Env = append(spec.Env, s.spec.Env...)
+	if url := s.appURL(decl.App); url != "" {
+		spec.Env = append(spec.Env, "CRATE_APP_URL="+url)
+	}
 
 	for _, volume := range spec.Volumes {
 		made, err := s.volumeExists(ctx, volume.Name)
