@@ -92,10 +92,13 @@ under it, and systemd-oomd. crate sets no limit. It only orders and counts its o
 A repo's main lives in a bare repo on the server. crate's hooks move it only to a commit whose check passed on the
 exact tree main becomes. A land is a plain `git push`.
 
-- `pre-receive`: runs `scripts/check.sh` in the repo's `image` on the pushed commit, with `CHECK_BASE` the old main,
-  within `timeout` seconds. Red refuses the push. One check at a time per repo. A push of a version tag is refused
+- `pre-receive`: makes the pushed commit a workspace of kind check (its services, its tools member on the repo's
+  `image`, its built app), then runs `scripts/check.sh` in it with `CHECK_BASE` the old main, all within `timeout`
+  seconds. Red refuses the push. One check at a time per repo, and the machine's count across repos. The workspace is
+  removed after, all but its tools volumes, which stay warm. A push of a version tag is refused
 - `post-receive`: copies main to GitHub, runs `postsubmit` if the repo has one, then releases
-- postsubmit: the slow sets, after main moves, one run at a time. Red reverts main to the last green, through the check
+- postsubmit: the slow sets, in a workspace of kind postsubmit, after main moves, one run at a time. Red reverts main
+  to the last green, through the check
 - release: each move of main tags a version of each of `packages` whose commits ask for one (Conventional Commits as
   semver; before 1.0.0 each bump moves down a place). The tag is the truth, and `ship` names how it publishes. A
   package's first version is tagged by hand in the bare repo: `git -C <bare> tag v<version> <commit>`

@@ -235,6 +235,54 @@ else not_ok "crate's own version tags are made and copied as before" "rc=$rc
 repo: $(tags_of "$tmp/repo.git") github: $(tags_of "$tmp/github.git")
 $out"; fi
 
+# the check is a workspace: it reaches its own service by name and its built app as app, and leaves nothing but its
+# kept volume
+busybox=docker.io/library/busybox:latest
+setup
+git push -q "$tmp/repo.git" main 2>/dev/null
+cat >>crate.toml <<TOML
+services = "pod.yaml"
+
+[app]
+build = "app.Containerfile"
+health = "wget -qO- http://127.0.0.1:8080/"
+
+[[app.ports]]
+name = "web"
+port = 8080
+TOML
+cat >pod.yaml <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: WORKSPACE-postgres
+spec:
+  containers:
+    - name: postgres
+      image: $busybox
+      command: ["sh", "-c", "echo service-up >/tmp/index.html; exec httpd -f -p 5432 -h /tmp"]
+YAML
+cat >app.Containerfile <<DOCKER
+FROM $busybox
+CMD ["sh", "-c", "mkdir -p /tmp/www && echo built-app >/tmp/www/index.html && exec httpd -f -p 8080 -h /tmp/www"]
+DOCKER
+cat >scripts/check.sh <<'SH'
+#!/bin/sh
+echo "service says $(wget -qO- http://postgres:5432/)"
+echo "app says $(wget -qO- http://app:8080/)"
+SH
+git add -A && git commit -qm "chore: a service and an app"
+out=$(git push "$tmp/repo.git" main 2>&1)
+if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "service says service-up" <<<"$out" &&
+  grep -q "app says built-app" <<<"$out"; then
+  ok "the check reaches its service by name and its built app as app"
+else not_ok "the check reaches its service by name and its built app as app" "$out"; fi
+left=$( { ${CRATE_ENGINE:-podman} ps -a --format '{{.Names}}'; ${CRATE_ENGINE:-podman} pod ls --format '{{.Name}}'
+  ${CRATE_ENGINE:-podman} network ls --format '{{.Name}}'; } | grep '^crate-repo-check' | tr '\n' ' ')
+if [ -z "$left" ] && ${CRATE_ENGINE:-podman} volume exists crate-repo-check-node-modules; then
+  ok "the check leaves nothing but its kept volume"
+else not_ok "the check leaves nothing but its kept volume" "left: $left"; fi
+
 # the README says how a first version is set
 if grep -Eq 'git( -C [^ ]+)? tag ' "$repo/README.md"; then ok "the README gives the command that sets a first version"
 else not_ok "the README gives the command that sets a first version"; fi

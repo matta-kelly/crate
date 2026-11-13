@@ -45,6 +45,7 @@ type Spec struct {
 	Keep     []string
 	Out      io.Writer
 	Router   Router // a person's workspace's routes; nil for none
+	Image    string // the tools member's image when the caller has one; "" for the repo's dev image
 }
 
 // System is a system of one name on one machine.
@@ -101,8 +102,13 @@ func (s *System) Hold() error {
 	}
 }
 
-// Image puts the system's dev image on the machine, placed through its machine's Place.
+// Image puts the system's dev image on the machine, placed through its machine's Place. A Spec that names an image
+// takes that one.
 func (s *System) Image() error {
+	if s.spec.Image != "" {
+		s.image = s.spec.Image
+		return nil
+	}
 	placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
 	if err != nil {
 		return err
