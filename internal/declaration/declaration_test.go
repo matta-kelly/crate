@@ -75,9 +75,9 @@ func TestTheDevTableReadsAsTypedValues(t *testing.T) {
 	}{
 		{"every key",
 			"name = \"que-pasa\"\n\n[dev]\nimage = \"example.test/team/custom-dev\"\ncontainerfile = \"docker/Containerfile\"\n" +
-				"inputs = [\".devcontainer/devcontainer.json\", \"docker/Containerfile\", \"package-lock.json\"]\nsmoke = \"ci/smoke.sh\"\n",
+				"inputs = [\".crate/pod.yaml\", \"docker/Containerfile\", \"package-lock.json\"]\nsmoke = \"ci/smoke.sh\"\n",
 			declaration.Dev{Image: "example.test/team/custom-dev", Containerfile: "docker/Containerfile",
-				Inputs: []string{".devcontainer/devcontainer.json", "docker/Containerfile", "package-lock.json"}, Smoke: "ci/smoke.sh"}},
+				Inputs: []string{".crate/pod.yaml", "docker/Containerfile", "package-lock.json"}, Smoke: "ci/smoke.sh"}},
 		{"inputs of one path, over several lines",
 			"[dev]\ninputs = [\n  \"a b/c.txt\",\n]\n",
 			declaration.Dev{Inputs: []string{"a b/c.txt"}}},

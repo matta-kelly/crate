@@ -162,10 +162,33 @@ func TestAnAppThatNeverPassesItsHealthFailsUpWithItsLog(t *testing.T) {
 	w.mustLeaveNothing()
 }
 
+// crate up -e: the dev server takes a need from the host's env by its name, and a second up with -e makes it again,
+// so it takes the name's new value.
+func TestAWorkspacesDevServerTakesANeedPassedByName(t *testing.T) {
+	t.Setenv("SECRET", "first")
+	w := newWorld(t, worldOpts{Kind: system.Work, Busybox: true, Pass: []string{"SECRET"},
+		App: "[app]\ncommand = " + fmt.Sprintf("%q", serve("$SECRET")) + "\n" + health + "\nneeds = [\"SECRET\"]\n" + port})
+	w.up()
+	if got := strings.TrimSpace(w.mustRun("wget", "-qO-", "http://app:8080/")); got != "first" {
+		t.Errorf("the dev server: expected the host's SECRET, first, got %q", got)
+	}
+	t.Setenv("SECRET", "second")
+	if err := w.sys.Up(context.Background()); err != nil {
+		t.Fatalf("the second Up: %v", err)
+	}
+	if got := strings.TrimSpace(w.mustRun("wget", "-qO-", "http://app:8080/")); got != "second" {
+		t.Errorf("the dev server after a second up -e: expected second, got %q", got)
+	}
+	if err := w.sys.Remove(nil); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	w.mustLeaveNothing()
+}
+
 // needsApp is a check's built app that needs SECRET, with the image's CMD given.
 func needsApp(env, cmd string) worldOpts {
 	return worldOpts{Kind: system.Check, Busybox: true,
-		App: "[app]\nbuild = \"app.Containerfile\"\n" + health + "\nneeds = [\"SECRET\"]\nenv = { " + env + " }\n" + port,
+		App:      "[app]\nbuild = \"app.Containerfile\"\n" + health + "\nneeds = [\"SECRET\"]\nenv = { " + env + " }\n" + port,
 		AppFiles: map[string]string{"app.Containerfile": "FROM " + busyboxImage + "\nCMD [\"sh\", \"-c\", " + fmt.Sprintf("%q", cmd) + "]\n"}}
 }
 
@@ -272,8 +295,8 @@ func TestAWorkspaceWhoseToolsEnvLacksANeedFailsUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	err := w.sys.Up(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "needs SECRET;") || !strings.Contains(err.Error(), "[tools] env") {
-		t.Errorf("Up: expected an error that names SECRET alone and [tools] env, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "needs SECRET;") || !strings.Contains(err.Error(), "crate up -e") {
+		t.Errorf("Up: expected an error that names SECRET alone and crate up -e, got %v", err)
 	}
 	if err := w.sys.Remove(nil); err != nil {
 		t.Fatalf("Remove: %v", err)

@@ -76,8 +76,8 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 			Placement: placement,
 		})
 	case !s.built() && a.Command != "":
-		if missing := missingNeeds(a.Needs, decl.Tools.Env, s.spec.Env); len(missing) > 0 {
-			return fmt.Errorf("app: [app] needs %s; [tools] env does not give them", strings.Join(missing, ", "))
+		if missing := missingNeeds(a.Needs, decl.Tools.Env, append(slices.Clone(s.spec.Env), s.spec.Pass...)); len(missing) > 0 {
+			return fmt.Errorf("app: [app] needs %s; neither [tools] env nor crate up -e gives them", strings.Join(missing, ", "))
 		}
 		placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
 		if err != nil {
@@ -99,6 +99,13 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 			spec.Mounts = append(spec.Mounts, member.Mount{Source: mount.Path, Target: mount.Path, ReadOnly: true})
 		}
 		spec.Env = append(spec.Env, s.spec.Env...)
+		spec.Env = append(spec.Env, s.spec.Pass...)
+		if len(s.spec.Pass) > 0 {
+			// A member's env is set when it is made, so the dev server is made again to take the names.
+			if _, err := s.call(ctx, "rm", "-f", "-t", "0", spec.Name); err != nil {
+				return err
+			}
+		}
 	default:
 		return nil
 	}
@@ -234,14 +241,15 @@ func (s *System) refuses(ctx context.Context, a declaration.App, placement machi
 	return nil
 }
 
-// missingNeeds is each need that neither env nor the extra KEY=value lines give.
+// missingNeeds is each need that neither env nor extra gives. An extra is a KEY=value line, or a name alone that
+// podman passes from crate's own env.
 func missingNeeds(needs []string, env map[string]string, extra []string) []string {
 	var missing []string
 	for _, need := range needs {
 		if _, ok := env[need]; ok {
 			continue
 		}
-		if slices.ContainsFunc(extra, func(kv string) bool { return strings.HasPrefix(kv, need+"=") }) {
+		if slices.ContainsFunc(extra, func(kv string) bool { return kv == need || strings.HasPrefix(kv, need+"=") }) {
 			continue
 		}
 		missing = append(missing, need)

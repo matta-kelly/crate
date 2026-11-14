@@ -16,7 +16,7 @@ const registry = "ghcr.io/matta-kelly/"
 // Where every repo keeps its Containerfile and its smoke, when [dev] names no other. The inputs and the name have no
 // default: a repo declares them.
 var (
-	defaultContainerfile = ".devcontainer/Containerfile"
+	defaultContainerfile = ".crate/Containerfile"
 	defaultSmoke         = "scripts/dev-image-smoke.sh"
 )
 

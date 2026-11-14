@@ -62,10 +62,11 @@ func (w *workspace) head() string {
 	return strings.TrimSpace(string(out))
 }
 
-// system is this workspace as a system of one kind, on the default machine, its steps on rec (nil for none). A
-// person's workspace gets the machine's router for its app's routes.
-func (w *workspace) system(kind string, out io.Writer, rec *record.Run) *system.System {
-	spec := system.Spec{Kind: kind, Name: w.name, Checkout: w.root, Out: out, Record: rec}
+// system is this workspace as a system of one kind, on the default machine, its steps on rec (nil for none), and pass
+// the names its dev server takes from crate's own env (up -e). A person's workspace gets the machine's router for its
+// app's routes.
+func (w *workspace) system(kind string, out io.Writer, rec *record.Run, pass []string) *system.System {
+	spec := system.Spec{Kind: kind, Name: w.name, Checkout: w.root, Out: out, Record: rec, Pass: pass}
 	if kind == system.Work {
 		spec.Router = router.New(machine.Default())
 	}

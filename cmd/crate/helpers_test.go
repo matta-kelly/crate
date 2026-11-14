@@ -28,7 +28,7 @@ import (
 
 const (
 	image      = "ghcr.io/matta-kelly/que-pasa-dev"
-	goldenHash = "5408977388ce524d"
+	goldenHash = "32123fced599b132"
 )
 
 // crateBin is the built binary; TestMain builds it once.
@@ -53,14 +53,14 @@ func TestMain(m *testing.M) {
 
 // fixtureDeclaration declares the fixture: its name, and the template's three inputs. crate.toml is no input, so
 // the golden hash is the inputs' alone.
-const fixtureDeclaration = "name = \"que-pasa\"\n\n[dev]\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n"
+const fixtureDeclaration = "name = \"que-pasa\"\n\n[dev]\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n"
 
 // the template's three inputs, each one fixed line, and one other file
 var inputFiles = map[string]string{
-	".devcontainer/devcontainer.json": "devcontainer.json fixture\n",
-	".devcontainer/Containerfile":     "Containerfile fixture\n",
-	"package-lock.json":               "package-lock.json fixture\n",
-	"README.md":                       "readme\n",
+	".crate/pod.yaml":      "pod.yaml fixture\n",
+	".crate/Containerfile": "Containerfile fixture\n",
+	"package-lock.json":    "package-lock.json fixture\n",
+	"README.md":            "readme\n",
 }
 
 const podmanStub = `#!/usr/bin/env bash

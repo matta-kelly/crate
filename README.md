@@ -18,8 +18,10 @@ through a merge queue.
 
 `crate [-C <checkout>] <verb>`:
 
-- `up [--attempt]`: make it, or start what stopped. A second `up` changes nothing. An attempt runs in a worktree of its
-  own, with no route. Each `up` is a run on the person's [record](#the-record)
+- `up [--attempt] [-e NAME]...`: make it, or start what stopped. A second `up` changes nothing. An attempt runs in a
+  worktree of its own, with no route. Each `-e NAME` passes this shell's `NAME` to the dev server by name, as `run -e`
+  does, and counts as given for `[app] needs`; the dev server is made again to take it. Each `up` is a run on the
+  person's [record](#the-record)
 - `run [-e NAME]... [--] <argv...>`: run a command in the tools member, in the caller's folder. Its exit is the
   command's. Each `-e NAME` passes this shell's `NAME` by name, so a secret's value is never in argv
 - `url`: the workspace's URLs, one per line
@@ -40,7 +42,7 @@ The app, by kind:
 
 ```toml
 name = "publicpersona"                 # the repo's name: its workspace's and its dev image's
-services = ".devcontainer/pod.yaml"    # the services file, or no services
+services = ".crate/pod.yaml"    # the services file, or no services
 
 [tools]
 setup = "pnpm install --frozen-lockfile"   # run once when the tools member is made
@@ -59,7 +61,7 @@ name = "web"
 port = 3000
 
 [dev]                                      # the dev image: the paths its hash covers
-inputs = [".devcontainer/Containerfile", "pnpm-lock.yaml", "package.json"]
+inputs = [".crate/Containerfile", "pnpm-lock.yaml", "package.json"]
 ```
 
 - services: Pod documents, each named `WORKSPACE-<service>`. `WORKSPACE` becomes the workspace's name, and each pod

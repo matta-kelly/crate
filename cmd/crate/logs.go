@@ -22,5 +22,5 @@ func logsVerb(args []string) error {
 	if err != nil {
 		return err
 	}
-	return w.system(system.Work, os.Stdout, nil).Logs(member, os.Stdout)
+	return w.system(system.Work, os.Stdout, nil, nil).Logs(member, os.Stdout)
 }

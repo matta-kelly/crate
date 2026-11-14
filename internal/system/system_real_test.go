@@ -20,37 +20,38 @@ import (
 	"time"
 
 	"github.com/matta-kelly/crate/internal/machine/machinetest"
-	"github.com/matta-kelly/crate/internal/system"
 	"github.com/matta-kelly/crate/internal/record"
+	"github.com/matta-kelly/crate/internal/system"
 )
 
 const (
 	alpine       = "docker.io/library/alpine:latest"
 	busyboxImage = "docker.io/library/busybox:latest"
-	timeout = 5 * time.Minute
+	timeout      = 5 * time.Minute
 )
 
 var serial atomic.Int64
 
 // worldOpts says what a world's crate.toml and services file hold.
 type worldOpts struct {
-	Kind     string
-	Name     string   // the system's name, when a test needs its own; else one of this run's
-	Setup    string   // [tools] setup, or "" for none
-	Services bool     // a .devcontainer/pod.yaml with one Pod, WORKSPACE-postgres
-	Mounts   []system.Mount
-	Env      []string
-	ToolsEnv map[string]string // [tools] env
-	NoTools  bool              // no [tools] table at all
-	Slice    string            // the recorder's placement
-	Keep     []string
-	BadVolumes bool // [tools] volumes is a string, not a list
-	NoDevImage bool // leave the dev image off the machine, so Image pulls and builds
+	Kind       string
+	Name       string // the system's name, when a test needs its own; else one of this run's
+	Setup      string // [tools] setup, or "" for none
+	Services   bool   // a .crate/pod.yaml with one Pod, WORKSPACE-postgres
+	Mounts     []system.Mount
+	Env        []string
+	Pass       []string          // the names the dev server takes from the test's env (crate up -e)
+	ToolsEnv   map[string]string // [tools] env
+	NoTools    bool              // no [tools] table at all
+	Slice      string            // the recorder's placement
+	Keep       []string
+	BadVolumes bool              // [tools] volumes is a string, not a list
+	NoDevImage bool              // leave the dev image off the machine, so Image pulls and builds
 	App        string            // the [app] table, or "" for none
 	AppFiles   map[string]string // files the app needs, by path in the checkout
-	Busybox    bool          // the dev image is busybox, which has httpd and wget
-	Router     system.Router // a person's workspace's router
-	Record     *record.Run   // the run that records the steps
+	Busybox    bool              // the dev image is busybox, which has httpd and wget
+	Router     system.Router     // a person's workspace's router
+	Record     *record.Run       // the run that records the steps
 }
 
 type world struct {
@@ -75,7 +76,7 @@ func newWorld(t *testing.T, o worldOpts) *world {
 		w.name = fmt.Sprintf("cratetest-%d-%d", os.Getpid(), n)
 	}
 	w.root = filepath.Join(w.dir, "checkout")
-	for _, d := range []string{w.root, filepath.Join(w.root, ".devcontainer"), filepath.Join(w.root, "src")} {
+	for _, d := range []string{w.root, filepath.Join(w.root, ".crate"), filepath.Join(w.root, "src")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -83,7 +84,7 @@ func newWorld(t *testing.T, o worldOpts) *world {
 	setup := o.Setup
 	services := ""
 	if o.Services {
-		services = `services = ".devcontainer/pod.yaml"`
+		services = `services = ".crate/pod.yaml"`
 	}
 	tools := ""
 	if !o.NoTools {
@@ -108,12 +109,12 @@ func newWorld(t *testing.T, o worldOpts) *world {
 
 [dev]
 image = "docker.io/library/alpine"
-containerfile = ".devcontainer/Containerfile"
-inputs = [".devcontainer/Containerfile", "package-lock.json"]
+containerfile = ".crate/Containerfile"
+inputs = [".crate/Containerfile", "package-lock.json"]
 
 %s
 %s`, strconv.Quote(w.name), services, tools, o.App))
-	w.write(".devcontainer/Containerfile", "FROM "+alpine+"\n")
+	w.write(".crate/Containerfile", "FROM "+alpine+"\n")
 	lock := "lock\n"
 	if o.Busybox {
 		lock = "lock busybox\n" // its own tag, so it never meets the alpine one
@@ -127,7 +128,7 @@ inputs = [".devcontainer/Containerfile", "package-lock.json"]
 		w.write(path, body)
 	}
 	if o.Services {
-		w.write(".devcontainer/pod.yaml", servicesFile())
+		w.write(".crate/pod.yaml", servicesFile())
 	}
 	w.git("init", "-q", "-b", "main")
 	w.git("add", "-A")
@@ -142,6 +143,7 @@ inputs = [".devcontainer/Containerfile", "package-lock.json"]
 		Checkout: w.root,
 		Mounts:   o.Mounts,
 		Env:      o.Env,
+		Pass:     o.Pass,
 		Keep:     o.Keep,
 		Out:      &w.out,
 		Router:   o.Router,
@@ -197,7 +199,7 @@ func (w *world) git(args ...string) {
 // fixture needs no declaration parser.
 func (w *world) tagDevImage(busybox bool) {
 	w.t.Helper()
-	cmd := exec.Command("git", "ls-tree", "-r", "HEAD", "--", ".devcontainer/Containerfile", "package-lock.json")
+	cmd := exec.Command("git", "ls-tree", "-r", "HEAD", "--", ".crate/Containerfile", "package-lock.json")
 	cmd.Dir = w.root
 	listing, err := cmd.Output()
 	if err != nil {
@@ -718,4 +720,3 @@ func TestAPlacementPutsMembersAndServicesUnderTheSlice(t *testing.T) {
 		}
 	}
 }
-

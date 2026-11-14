@@ -43,6 +43,7 @@ type Spec struct {
 	Checkout string
 	Mounts   []Mount
 	Env      []string
+	Pass     []string // names the dev server takes from the caller's env by name alone (crate up -e); nil for none
 	Keep     []string
 	Out      io.Writer
 	Router   Router      // a person's workspace's routes; nil for none

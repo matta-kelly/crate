@@ -42,26 +42,26 @@ func newWs(t *testing.T, declared string) *ws {
 		declared = fmt.Sprintf("crtest-%d-%d", os.Getpid(), wsSerial.Add(1))
 	}
 	w.name = declared + "-ws"
-	for _, d := range []string{w.root, filepath.Join(w.root, ".devcontainer"), filepath.Join(w.root, "src")} {
+	for _, d := range []string{w.root, filepath.Join(w.root, ".crate"), filepath.Join(w.root, "src")} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 	w.write("crate.toml", fmt.Sprintf(`name = %q
-services = ".devcontainer/pod.yaml"
+services = ".crate/pod.yaml"
 
 [dev]
 image = "docker.io/library/alpine"
-containerfile = ".devcontainer/Containerfile"
-inputs = [".devcontainer/Containerfile", "package-lock.json"]
+containerfile = ".crate/Containerfile"
+inputs = [".crate/Containerfile", "package-lock.json"]
 
 [tools]
 setup = "echo ready"
 volumes = ["node_modules"]
 `, declared))
-	w.write(".devcontainer/Containerfile", "FROM "+wsAlpine+"\n")
+	w.write(".crate/Containerfile", "FROM "+wsAlpine+"\n")
 	w.write("package-lock.json", "lock\n")
-	w.write(".devcontainer/pod.yaml", `apiVersion: v1
+	w.write(".crate/pod.yaml", `apiVersion: v1
 kind: Pod
 metadata:
   name: WORKSPACE-postgres
@@ -107,7 +107,7 @@ func (w *ws) git(args ...string) {
 
 func (w *ws) tagDevImage() {
 	w.t.Helper()
-	cmd := exec.Command("git", "ls-tree", "-r", "HEAD", "--", ".devcontainer/Containerfile", "package-lock.json")
+	cmd := exec.Command("git", "ls-tree", "-r", "HEAD", "--", ".crate/Containerfile", "package-lock.json")
 	cmd.Dir = w.root
 	listing, err := cmd.Output()
 	if err != nil {
@@ -322,6 +322,23 @@ func TestRunPassesTheHostsEnvByName(t *testing.T) {
 	r, err = w.run(w.root, "run", "-e", "CRATE_TEST_UNSET", "sh", "-c", "echo ran")
 	if err != nil || r.code == 0 || !strings.Contains(r.err, "CRATE_TEST_UNSET is not set") || strings.Contains(r.out, "ran") {
 		t.Errorf("run -e of an unset name: expected a refusal that names it, and nothing run, got %v %s", err, r)
+	}
+}
+
+// up -e refuses a NAME the host has not set, named, and a word that is not a name, and makes nothing.
+func TestUpRefusesANameItCannotPass(t *testing.T) {
+	t.Parallel()
+	w := newWs(t, "")
+	r, err := w.run(w.root, "up", "-e", "CRATE_TEST_UNSET")
+	if err != nil || r.code == 0 || !strings.Contains(r.err, "CRATE_TEST_UNSET is not set") {
+		t.Errorf("up -e of an unset name: expected a refusal that names it, got %v %s", err, r)
+	}
+	r, err = w.run(w.root, "up", "-e", "NOT-A-NAME")
+	if err != nil || r.code != 2 {
+		t.Errorf("up -e of a word that is not a name: expected the usage, exit 2, got %v %s", err, r)
+	}
+	if left := w.leftovers(); len(left) > 0 {
+		t.Errorf("a refused up: expected nothing made, got %v", left)
 	}
 }
 

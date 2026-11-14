@@ -57,8 +57,8 @@ type Port struct {
 // run as production does; command is the dev server, which a person's workspace and an attempt run in the dev
 // image; health is the command run inside the app that says it is ready, as a quadlet's HealthCmd; env is the
 // built app's env in crate's runs; ports are its ports, the first the workspace's own host. needs is the shape of
-// the app's binding: the env each place that runs it must give (the workspace by [tools] env, a check by env,
-// production by its own), and without which the built image refuses to start.
+// the app's binding: the env each place that runs it must give (the workspace by [tools] env or up -e, a check by
+// env, production by its own), and without which the built image refuses to start.
 type App struct {
 	Build   string            `toml:"build"`
 	Command string            `toml:"command"`

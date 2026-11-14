@@ -14,7 +14,7 @@ import (
 )
 
 // golden values for the fixture of helpers_test.go: the template's three inputs, each one fixed line
-// (".devcontainer/devcontainer.json", ".devcontainer/Containerfile" and "package-lock.json", each
+// (".crate/pod.yaml", ".crate/Containerfile" and "package-lock.json", each
 // "<file name> fixture"), mode 100644. The hash is `git ls-tree -r HEAD -- <inputs> | sha256sum | cut -c1-16`
 // of the tree entries, so one set of bytes gives one hash on every machine, whatever the author and date.
 //
@@ -25,8 +25,8 @@ import (
 // the inputs a [dev] table lists: the Containerfile and package-lock.json (A); the Containerfile and
 // README.md (B). The test reads no other repo and holds no copy of the script.
 const (
-	goldenA = "e24ffb7dd004cd7c"
-	goldenB = "dc73925ad6e7a75e"
+	goldenA = "522b20296e8ac300"
+	goldenB = "a5b291aa31d39d43"
 )
 
 const goldenRef = "ghcr.io/matta-kelly/que-pasa-dev@sha256:0000000000000000000000000000000000000000000000000000000000000007"
@@ -65,7 +65,7 @@ func TestHashFailsOnAMissingInput(t *testing.T) {
 
 func TestHashFollowsEachInput(t *testing.T) {
 	f := newFx(t, "que-pasa")
-	for _, in := range []string{".devcontainer/devcontainer.json", ".devcontainer/Containerfile", "package-lock.json"} {
+	for _, in := range []string{".crate/pod.yaml", ".crate/Containerfile", "package-lock.json"} {
 		before := f.hashNow()
 		f.commit(in, in+" changed\n")
 		after := f.hashNow()
@@ -112,7 +112,7 @@ func TestEnsureBuildsSmokesAndPushesWhenTheTagIsMissing(t *testing.T) {
 	r := f.dev(nil, "ensure")
 	tag := image + ":" + goldenHash
 	want := strings.Join([]string{
-		"podman build -f .devcontainer/Containerfile -t " + tag + "-candidate .",
+		"podman build -f .crate/Containerfile -t " + tag + "-candidate .",
 		"smoke " + tag + "-candidate",
 		"podman tag " + tag + "-candidate " + tag,
 		"podman push " + tag,
@@ -285,7 +285,7 @@ func TestLocalBuildsWhenNoOneHasIt(t *testing.T) {
 	}
 	calls := f.calls()
 	for _, want := range []string{
-		"podman build -f .devcontainer/Containerfile -t " + tag + "-candidate .",
+		"podman build -f .crate/Containerfile -t " + tag + "-candidate .",
 		"smoke " + tag + "-candidate",
 		"podman tag " + tag + "-candidate " + tag,
 	} {
@@ -664,7 +664,7 @@ func TestTheImageNameIsTheDeclaredOne(t *testing.T) {
 		{"a checkout in another folder", "work", "", "repo", "ghcr.io/matta-kelly/que-pasa-dev"},
 		{"a worktree in a folder x", "que-pasa", "", "worktree", "ghcr.io/matta-kelly/que-pasa-dev"},
 		{"a bare repo with --rev", "que-pasa", "", "bare", "ghcr.io/matta-kelly/que-pasa-dev"},
-		{"[dev] image over name", "work", "name = \"que-pasa\"\n\n[dev]\nimage = \"example.test/team/custom-dev\"\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n", "repo", "example.test/team/custom-dev"},
+		{"[dev] image over name", "work", "name = \"que-pasa\"\n\n[dev]\nimage = \"example.test/team/custom-dev\"\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n", "repo", "example.test/team/custom-dev"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -697,7 +697,7 @@ func TestTheImageNameIsTheDeclaredOne(t *testing.T) {
 func TestARepoThatDoesNotDeclareItselfIsRefused(t *testing.T) {
 	rows := []struct{ name, toml, says string }{
 		{"no crate.toml", "", "needs name"},
-		{"no name", "[dev]\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n", "needs name"},
+		{"no name", "[dev]\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n", "needs name"},
 		{"no [dev]", "name = \"que-pasa\"\n", "needs [dev] inputs"},
 		{"[dev] with no inputs", "name = \"que-pasa\"\n\n[dev]\nsmoke = \"scripts/dev-image-smoke.sh\"\n", "needs [dev] inputs"},
 	}
@@ -748,8 +748,8 @@ func TestDevInputsAreExactlyWhatTheHashCovers(t *testing.T) {
 		inputs string
 		want   string
 	}{
-		{"the Containerfile and the lock", `[".devcontainer/Containerfile", "package-lock.json"]`, goldenA},
-		{"the Containerfile and the README", `[".devcontainer/Containerfile", "README.md"]`, goldenB},
+		{"the Containerfile and the lock", `[".crate/Containerfile", "package-lock.json"]`, goldenA},
+		{"the Containerfile and the README", `[".crate/Containerfile", "README.md"]`, goldenB},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -762,8 +762,8 @@ func TestDevInputsAreExactlyWhatTheHashCovers(t *testing.T) {
 	}
 	t.Run("a file the list leaves out", func(t *testing.T) {
 		f := newFx(t, "que-pasa")
-		f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\ninputs = [\".devcontainer/Containerfile\", \"package-lock.json\"]\n")
-		f.commit(".devcontainer/devcontainer.json", "changed\n")
+		f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\ninputs = [\".crate/Containerfile\", \"package-lock.json\"]\n")
+		f.commit(".crate/pod.yaml", "changed\n")
 		if r := f.dev(nil, "hash"); r.out != goldenA+"\n" {
 			t.Errorf("the hash: expected %q to stay when an unlisted input changes, got %s", goldenA, r)
 		}
@@ -776,8 +776,8 @@ func TestDevContainerfileMustBeAnInput(t *testing.T) {
 		toml string
 		want string
 	}{
-		{"the default Containerfile", "name = \"que-pasa\"\n\n[dev]\ninputs = [\"package-lock.json\"]\n", ".devcontainer/Containerfile"},
-		{"a named Containerfile", "name = \"que-pasa\"\n\n[dev]\ncontainerfile = \"docker/Containerfile\"\ninputs = [\".devcontainer/Containerfile\", \"package-lock.json\"]\n", "docker/Containerfile"},
+		{"the default Containerfile", "name = \"que-pasa\"\n\n[dev]\ninputs = [\"package-lock.json\"]\n", ".crate/Containerfile"},
+		{"a named Containerfile", "name = \"que-pasa\"\n\n[dev]\ncontainerfile = \"docker/Containerfile\"\ninputs = [\".crate/Containerfile\", \"package-lock.json\"]\n", "docker/Containerfile"},
 	}
 	for _, row := range rows {
 		for _, verb := range []string{"hash", "local"} {
@@ -813,7 +813,7 @@ func TestDevContainerfileIsWhatTheBuildReads(t *testing.T) {
 func TestDevSmokeRunsWithTheImageAsItsArgument(t *testing.T) {
 	f := newFx(t, "que-pasa")
 	f.script("ci/own-smoke.sh", "#!/usr/bin/env bash\necho \"own-smoke $1 [$#]\" >>\"$T/calls\"\n")
-	f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\nsmoke = \"ci/own-smoke.sh\"\ninputs = [\".devcontainer/devcontainer.json\", \".devcontainer/Containerfile\", \"package-lock.json\"]\n")
+	f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\nsmoke = \"ci/own-smoke.sh\"\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n")
 	r := f.dev(nil, "local")
 	tag := image + ":" + goldenHash
 	if r.code != 0 {
@@ -868,10 +868,10 @@ func TestDashCActsOnItsPathFromAnyFolder(t *testing.T) {
 
 func TestRevReadsTheCommitsTreeFromABareRepo(t *testing.T) {
 	f := newFx(t, "que-pasa")
-	f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\ninputs = [\".devcontainer/Containerfile\", \"package-lock.json\"]\n")
+	f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\ninputs = [\".crate/Containerfile\", \"package-lock.json\"]\n")
 	first := f.git(f.repo, "rev-parse", "HEAD")
 	// the head moves on: a new name and other inputs, and a changed lock
-	f.commit("crate.toml", "name = \"other\"\n\n[dev]\ninputs = [\".devcontainer/Containerfile\", \"README.md\"]\n")
+	f.commit("crate.toml", "name = \"other\"\n\n[dev]\ninputs = [\".crate/Containerfile\", \"README.md\"]\n")
 	f.commit("package-lock.json", "a newer lock\n")
 	bare := filepath.Join(f.dir, "somewhere.git")
 	f.git(f.dir, "clone", "-q", "--bare", f.repo, bare)
