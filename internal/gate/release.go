@@ -113,7 +113,7 @@ func (r *Repo) Release(commit string, out io.Writer) {
 		if err != nil {
 			fmt.Fprintf(out, "crate: %s has no %s<version> tag to count from; set its first version on the server: %s\n",
 				pkg, prefix, r.FirstVersionCommand(prefix+"<version>"))
-			r.begin("release", main, nil).End(record.Fail, pkg+": no tag to count from")
+			r.begin("release", "", main, nil).End(record.Fail, pkg+": no tag to count from")
 			continue
 		}
 		rng := last + ".." + main
@@ -129,7 +129,7 @@ func (r *Repo) Release(commit string, out io.Writer) {
 			continue
 		}
 		fmt.Fprintf(out, "crate: %s is %s, after %s\n", pkg, version, last)
-		r.begin("release", main, nil).End(record.Pass, version)
+		r.begin("release", "", main, nil).End(record.Pass, version)
 	}
 	// Every version tag, so one a failed copy left behind goes with the next.
 	if !r.hasGithub() {
@@ -141,7 +141,7 @@ func (r *Repo) Release(commit string, out io.Writer) {
 			prefix = "v"
 		}
 		if _, err := r.git("push", "-q", "github", "refs/tags/"+prefix+"*:refs/tags/"+prefix+"*"); err != nil {
-			r.begin("release", main, nil).End(record.Fail, "the copy of the "+prefix+" tags to github")
+			r.begin("release", "", main, nil).End(record.Fail, "the copy of the "+prefix+" tags to github")
 			fmt.Fprintln(out, "crate: the copy of the version tags to github failed; the next move copies again")
 		}
 	}

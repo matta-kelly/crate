@@ -34,7 +34,7 @@ type Mount struct {
 	Path string
 }
 
-// Spec is one system. Kind is one of the four; Name is the gate's name or a workspace's; Checkout is the
+// Spec is one system. Kind is one of the four; Name is a queue run's or postsubmit's name, or a workspace's; Checkout is the
 // folder that holds crate.toml. Keep names the volumes a gate's Up leaves in place when it clears a crash's
 // system, and Out is where Up's and Remove's steps and failures go.
 type Spec struct {

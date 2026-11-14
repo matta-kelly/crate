@@ -1,4 +1,4 @@
-// Command release puts a version of crate on GitHub, outside the gate it ships, so a broken hook never blocks
+// Command release puts a version of crate on GitHub, outside the merge queue it ships, so a broken hook never blocks
 // its own fix. `release publish <version>` checks, tags v<version>, moves the major tag, and puts the asset on
 // the releases of both. `release rollback <version>` moves the major back to an earlier version.
 // It is run by `just release` and `just rollback`.

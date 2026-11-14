@@ -1,7 +1,8 @@
 // Package record keeps crate's record: one JSON line for each step of a run, appended to a file as the step ends,
-// and one total line when the run ends. A run is one thing crate does to a system or a repo: a check, a postsubmit,
-// a person's up, a mirror or a release. The gate's record is <bare>/crate/log.jsonl; a person's is
-// $XDG_STATE_HOME/crate/log.jsonl. The record never fails a run: a line it cannot write is dropped.
+// and one total line when the run ends. A run is one thing crate does to a system or a repo: a check, a change's
+// land through the queue, a postsubmit, a person's up, a mirror or a release. The gate's record is
+// <bare>/crate/log.jsonl; a person's is $XDG_STATE_HOME/crate/log.jsonl. The record never fails a run: a line it
+// cannot write is dropped.
 package record
 
 import (
@@ -20,7 +21,7 @@ import (
 
 // The steps of a run, in the order a run takes them. A step that does not run writes no line.
 const (
-	Lock     = "lock"     // the wait for the repo's lock: the gate checks one push at a time
+	Wait     = "wait"     // a change's time in the queue before a run took it
 	Hold     = "hold"     // the wait for the system's slot on its machine
 	Image    = "image"    // the dev image on this machine; its note says stored, pulled or built
 	Services = "services" // the network and each service's pod
@@ -36,9 +37,8 @@ const (
 
 // The results of a step, and of a run.
 const (
-	Pass    = "pass"
-	Fail    = "fail"
-	Refused = "refused" // a push the gate refused before its check ran
+	Pass = "pass"
+	Fail = "fail"
 )
 
 // Line is one line of the record.
@@ -155,6 +155,15 @@ func (r *Run) write(step string, d time.Duration, result, note string) Line {
 	return line
 }
 
+// Append writes one line of a run that is not timed as it goes: its step, how long it took, its result and note.
+// The queue writes a change's land run this way, at its verdict. Lines of one run share its Run, from ID.
+func Append(path string, run Line, step string, d time.Duration, result, note string) {
+	run.At = time.Now().UTC().Format(time.RFC3339)
+	run.Step, run.Result, run.Note = step, result, firstLine(note)
+	run.Seconds = math.Round(d.Seconds()*10) / 10
+	appendLine(path, run)
+}
+
 // Summary is a run's lines as one line of output, in the order the steps ended:
 // "crate: hold 0s, image 2s (stored), setup 61s (fail); total 63s, fail".
 func Summary(lines []Line) string {
@@ -222,6 +231,9 @@ func firstLine(s string) string {
 	}
 	return s
 }
+
+// ID is a new run's id: 8 random hex.
+func ID() string { return id() }
 
 func id() string {
 	b := make([]byte, 4)

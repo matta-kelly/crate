@@ -16,7 +16,7 @@ import (
 	"github.com/matta-kelly/crate/internal/system"
 )
 
-// The gate's case: a check named as the gate names it, an extra read-only mount at its host path, an extra
+// The queue's case: a check named as the queue names it, an extra read-only mount at its host path, an extra
 // env value, and the volumes to keep. Remove keeps the named volume with what the setup wrote, and leaves no
 // container, pod, network or service volume. The same for postsubmit.
 func TestTheGatesCaseThroughTheAPI(t *testing.T) {

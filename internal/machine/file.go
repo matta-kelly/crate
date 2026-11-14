@@ -73,3 +73,13 @@ func number(key string, v any) (int, error) {
 	}
 	return int(n), nil
 }
+
+// Window is how many systems of kind the machine file lets run at once: its [count], 1 when there is no file or it
+// cannot be read (Hold then says why). The merge queue checks as many changes side by side.
+func Window(kind string) int {
+	cfg, err := Read(Path())
+	if err != nil || cfg == nil {
+		return 1
+	}
+	return map[string]int{Check: cfg.Count.Check, Postsubmit: cfg.Count.Postsubmit, Attempt: cfg.Count.Attempt}[kind]
+}

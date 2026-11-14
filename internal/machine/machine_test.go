@@ -113,3 +113,15 @@ func TestAKindOutsideTheFourIsAnError(t *testing.T) {
 		})
 	}
 }
+
+// The window of a kind is its count in the machine file, and 1 with no file.
+func TestTheWindowIsTheKindsCount(t *testing.T) {
+	t.Setenv("CRATE_MACHINE", write(t, "[count]\ncheck = 3\npostsubmit = 1\nattempt = 2\n"))
+	if got := machine.Window(machine.Check); got != 3 {
+		t.Errorf("check: expected 3, got %d", got)
+	}
+	t.Setenv("CRATE_MACHINE", filepath.Join(t.TempDir(), "absent.toml"))
+	if got := machine.Window(machine.Check); got != 1 {
+		t.Errorf("no file: expected 1, got %d", got)
+	}
+}

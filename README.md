@@ -1,7 +1,8 @@
 # crate
 
 crate makes a repo's workspace: the running system of one change, from the repo's `crate.toml`. A person, a test, an
-agent and the check each ask that system whether the change works. crate also guards each repo's main on the server.
+agent and the check each ask that system whether the change works. crate also keeps each repo's main on the server,
+through a merge queue.
 
 ## A workspace
 
@@ -72,7 +73,8 @@ inputs = [".devcontainer/Containerfile", "pnpm-lock.yaml", "package.json"]
 - the tools member reaches the app as `app`, and by `CRATE_APP_URL` (`http://<name>-<folder>-app:<first port>`). A
   browser test opens `CRATE_APP_URL`: Chrome sends the top-level domain `app` to https
 - a built app needs at least one port. The dev image needs the tool `health` calls (`wget`) when the dev server runs it
-- the gate's keys: `crate`, `image`, `timeout`, `ship`, `packages`, `postsubmit`, `postsubmit_timeout` ([The gate](#the-gate))
+- the merge queue's keys: `crate`, `image`, `timeout`, `batch`, `ship`, `packages`, `postsubmit`, `postsubmit_timeout`
+  ([The merge queue](#the-merge-queue))
 
 ## The machine
 
@@ -89,7 +91,7 @@ under it, and systemd-oomd. crate sets no limit. It only orders and counts its o
 
 `crate dev-image <hash|ref|ensure|promote|local> [--rev <commit>]`: one image per hash of the repo's `[dev] inputs`,
 in ghcr as `ghcr.io/matta-kelly/<name>-dev` (or `[dev] image`). A repo declares `name` and `[dev] inputs`; crate
-guesses neither, and refuses a `crate.toml` that lacks one, at the gate too.
+guesses neither, and refuses a `crate.toml` that lacks one, in the queue too.
 
 - `hash`: the hash of the inputs at the commit
 - `ref`: `<image>@<digest>` of `<image>:<hash>`, else of `<image>:main`. Never builds
@@ -97,41 +99,64 @@ guesses neither, and refuses a `crate.toml` that lacks one, at the gate too.
 - `promote`: point `<image>:main` at `<image>:<hash>`
 - `local`: put `<image>:<hash>` in this machine's store: its copy, a pull, or a build with no push
 
-## The gate
+## The merge queue
 
-A repo's main lives in a bare repo on the server. crate's hooks move it only to a commit whose check passed on the
-exact tree main becomes. A land is a plain `git push`.
+A repo's main lives in a bare repo on the server, and moves only to a tree that passed its check. Only the queue moves
+it: a change enters the queue, the queue checks it on top of the changes ahead of it, and lands it when it passes.
 
-- `pre-receive`: makes the pushed commit a workspace of kind check (its services, its tools member on the repo's
-  `image`, its built app), then runs `scripts/check.sh` in it with `CHECK_BASE` the old main, all within `timeout`
-  seconds. Red refuses the push. One check at a time per repo, and the machine's count across repos. The workspace is
-  removed after, all but its tools volumes, which stay warm. A push of a version tag is refused
-- `post-receive`: copies main to GitHub, runs `postsubmit` if the repo has one, then releases
-- postsubmit: the slow sets, in a workspace of kind postsubmit, after main moves, one run at a time. Red reverts main
-  to the last green, through the check
+```
+the merge queue: main moves only to a tree that passed, and only the queue moves it
+├── the door (pre-receive): what a push may do
+│   ├── refs/queue/<sha>: the change enters the queue; <sha> is its commit, which shares history with main
+│   ├── :refs/queue/<sha>: it leaves the queue
+│   └── main is never pushed; a version tag is refused; other branches are free, and kept
+├── the queue: its changes in order, each held by its ref until its verdict
+├── the worker: one per repo, while changes wait
+│   ├── runs side by side, as many as the machine's [count] check, each in its own slot: a worktree
+│   │   (runs/<n>) and a system (crate-<repo>-check-<n>) whose tools volumes stay warm
+│   ├── a run checks up to `batch` waiting changes (4 by default), on the tip of the run ahead: so each run checks
+│   │   what main will be. A change on that tip moves it there; any other has its commits picked onto it, its author
+│   │   kept and crate the committer. A change that does not apply leaves, with the files it conflicts on
+│   ├── the head run passes: main moves to its tip by compare-and-swap, its changes land, then the copy to GitHub,
+│   │   and postsubmit or the release
+│   └── a run fails: the runs behind it start again without it. Its failure counts once every run ahead has passed;
+│       then a change checked alone leaves, and a batch is checked again in halves until the culprit is alone
+└── the verdict: the push waits, printing its change's output until its last line,
+    `crate: landed <sha> as <main>` or `crate: not landed: <why>`; `git push -o crate.wait=no` returns once queued
+```
+
+- the check: `scripts/check.sh` in a workspace of kind check (its services, its tools member on the repo's `image`, its
+  built app), with `CHECK_BASE` the run's base, within `timeout` seconds (900 by default)
+- `crate queue <bare>`: the queue, each change's place and what it is doing. `crate queue <bare> jump <sha>`: the
+  change goes first, checked alone, and every run starts again behind it
+- a worker that stopped starts again with the next push, the next wait, or `crate apply`
+- postsubmit: the slow sets, in a workspace of kind postsubmit, after main moves, one run at a time. Red puts a revert
+  to the last green main first in the queue
 - release: each move of main tags a version of each of `packages` whose commits ask for one (Conventional Commits as
   semver; before 1.0.0 each bump moves down a place). The tag is the truth, and `ship` names how it publishes. A
   package's first version is tagged by hand in the bare repo: `git -C <bare> tag v<version> <commit>`
 - `crate init <bare> [<github url>]`: put the hooks on a bare repo. `crate apply <file|->`: make a server match its
-  declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`). crate's own version is its install's
+  declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`). A new repo's main is seeded from GitHub's. crate's own version is
+  its install's
 
-`hooks/` holds two one-line scripts that run `crate hook <name>` from the install beside them. The gate's state lives
-beside each bare repo, in `<bare>/crate`: the check's checkout, its lock, its [record](#the-record), and postsubmit's.
+`hooks/` holds two one-line scripts that run `crate hook <name>` from the install beside them. The queue's state lives
+beside each bare repo, in `<bare>/crate`: `queue.json`, each change's log in `queue/`, the runs' worktrees, the
+worker's log, postsubmit's, and the [record](#the-record).
 
 ## The record
 
 crate's record of what it did and how long each part took: one JSON line per step of a run, appended as the step
-ends, and a total line when the run ends. A run is one thing crate does: a check, a postsubmit, an `up`, a copy to
-GitHub (mirror) or a release.
+ends, and a total line when the run ends. A run is one thing crate does: a check, a change's land through the queue,
+a postsubmit, an `up`, a copy to GitHub (mirror) or a release.
 
 - the files
-  - the gate: `<bare>/crate/log.jsonl`, each check, postsubmit, mirror and release of that repo
+  - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror and release of that repo
   - a person: `$XDG_STATE_HOME/crate/log.jsonl` (`~/.local/state` when unset), each `up` of that user
-- the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass`, `fail`, or
-  `refused` for a push refused before its check), `note` (why it failed, or what: the image's `stored`, `pulled` or
-  `built`, a version, `reverted by <sha>`)
+- the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass` or `fail`),
+  `note` (why it failed, or what: the image's `stored`, `pulled` or `built`, a check's changes, a land's main, a
+  version, the revert)
 - the steps, in order; a step that does not run writes no line
-  - `lock`: the wait for the repo's lock, one check at a time
+  - `wait`: a change's time in the queue before a run took it (a land)
   - `image`: the dev image on this machine
   - `hold`: the wait for a slot on the machine
   - `services`, `tools`, `setup` (a new tools member only)
@@ -139,25 +164,25 @@ GitHub (mirror) or a release.
   - `app`: started until healthy, and its routes
   - `check`: `scripts/check.sh`
   - `revert`: postsubmit's revert of a red main
-  - `total`: the run, its result the run's
+  - `total`: the run, its result the run's; a land's runs from entering the queue to its verdict
 - the summary: one line at the end of a run, in its output (the push, postsubmit's log, `up`'s stderr):
-  `crate: lock 0s, image 2s (stored), hold 0s, tools 1s, setup 61s, build 140s, needs 3s, app 5s, check 30s; total 242s, pass`
+  `crate: image 2s (stored), hold 0s, tools 1s, setup 61s, build 140s, needs 3s, app 5s, check 30s; total 242s, pass`
 - a run with no total line was stopped. A line crate cannot write is dropped: the record never fails a run
 
 ```sh
 # the median of each step of a repo's checks
 duckdb -c "select step, median(seconds) from '<bare>/crate/log.jsonl' where kind = 'check' group by step"
-# the last ten checks: commit, result, seconds
-jq -r 'select(.kind == "check" and .step == "total") | [.commit[:12], .result, .seconds] | @tsv' <bare>/crate/log.jsonl | tail
+# the last ten lands: commit, result, seconds from entering the queue to the verdict
+jq -r 'select(.kind == "land" and .step == "total") | [.commit[:12], .result, .seconds] | @tsv' <bare>/crate/log.jsonl | tail
 ```
 
 ## Changing crate
 
-crate stays outside the gate it ships, so a broken hook never blocks its own fix. A change lands on GitHub's main after
-`just check` passes: `go vet`, `go test ./...`, shellcheck, then the gate's tests in `test/`, run on real git and
+crate stays outside the queue it ships, so a broken hook never blocks its own fix. A change lands on GitHub's main after
+`just check` passes: `go vet`, `go test ./...`, shellcheck, then the queue's tests in `test/`, run on real git and
 podman against the built install (`just build`, in `dist/crate`).
 
-- `just release <major.minor.patch>`: check, tag, move the major tag (`v2`), and put `crate-linux-amd64.tar.gz`
+- `just release <major.minor.patch>`: check, tag, move the major tag (`v3`), and put `crate-linux-amd64.tar.gz`
   (`bin/crate`, `hooks/`, `VERSION`, `COMMIT`) on the release. A machine runs crate at the major tag
 - `just rollback <major.minor.patch>`: move the major tag back
 - every call has a limit, in `internal/limit`. `CRATE_LIMIT_SCALE` divides them all, never below 1 s, for tests

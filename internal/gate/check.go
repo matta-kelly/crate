@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/matta-kelly/crate/internal/declaration"
@@ -18,70 +19,51 @@ import (
 	"github.com/matta-kelly/crate/internal/system"
 )
 
-// ErrRefused is a check that did not pass: its reason is already in the output.
+// ErrRefused is a run that did not pass: its reason is already in its output.
 var ErrRefused = errors.New("refused")
 
-// Check lets main move from old to new only when the repo's check passes on new, the tree main becomes. It holds
-// the repo's lock for the whole check, so pushes are checked one at a time. The check is a run on the repo's record.
-func (r *Repo) Check(old, new string, out io.Writer) error {
-	rec := r.begin("check", new, out)
-	refuse := func(format string, a ...any) error {
-		note := fmt.Sprintf(format, a...)
-		fmt.Fprintf(out, "crate: %s\n", note)
-		rec.End(record.Refused, note)
-		return ErrRefused
-	}
-	step := rec.Step(record.Lock)
-	unlock, err := r.lock("lock")
-	step.End(err, "")
-	if err != nil {
-		rec.End(record.Fail, "")
-		return err
-	}
-	defer unlock()
-	dir := r.state("work")
-	now := r.main()
-	if (Zero(old) && now != "") || (!Zero(old) && now != old) {
-		return refuse("main moved while this push waited. Pull with rebase, and push again")
-	}
-	if !Zero(old) {
-		if _, err := r.git("merge-base", "--is-ancestor", old, new); err != nil {
-			return refuse("not a fast-forward of main. Pull with rebase, and push again")
-		}
-	}
-	if err := r.checkout(dir); err != nil {
-		rec.End(record.Fail, err.Error())
-		return err
-	}
-	if _, err := work(dir, "checkout", "-q", "-f", "--detach", new); err != nil {
-		return refuse("could not check out %s, so its tree is not checked. Push again", short(new))
-	}
-	_, _ = work(dir, "clean", "-q", "-fdx", "-e", "node_modules")
-	decl, err := readDeclaration(dir)
-	if err != nil {
-		return refuse("%v", err)
-	}
-	var env []string
-	if !Zero(old) {
-		env = append(env, "CHECK_BASE="+old)
-	}
-	err = r.run(rec, "check", dir, decl, seconds(decl.Timeout, 900), env, nil, out)
-	if err != nil && !Zero(old) {
-		// A refused push takes its objects with it: point the checkout back at a commit that stays.
-		_, _ = work(dir, "checkout", "-q", "-f", "--detach", old)
-	}
-	if err != nil {
-		rec.End(record.Fail, "")
-		return ErrRefused
-	}
-	rec.End(record.Pass, "")
-	return nil
+// slotSystem is the system of the queue's run slot: crate-<repo>-check-<slot>.
+func (r *Repo) slotSystem(slot int) string {
+	return "crate-" + r.Name() + "-check-" + strconv.Itoa(slot)
 }
 
-// run runs the repo's scripts/check.sh with args in a system of its kind, made from the checkout dir as a person's
-// workspace is: its network, its services, its tools member on the repo's image, and its app. The tools member's
-// volumes are kept between runs, so they stay warm. Up and the check together stop at limit. Each step goes on rec.
-func (r *Repo) run(rec *record.Run, kind, dir string, decl declaration.Declaration, limit time.Duration, env, args []string, out io.Writer) error {
+// postsubmitSystem is postsubmit's system: crate-<repo>-postsubmit.
+func (r *Repo) postsubmitSystem() string { return "crate-" + r.Name() + "-postsubmit" }
+
+// checkRun is the queue's check of a run: the repo's check on the run's tree, in its slot's checkout, with
+// CHECK_BASE the run's base, so a check plans its sets from what the run's changes touch. Its output goes to each
+// change's log, and it is a run on the record.
+func (r *Repo) checkRun(ctx context.Context, rn *run) error {
+	out, closeLogs := r.entryLogs(rn.shas())
+	defer closeLogs()
+	fmt.Fprintf(out, "crate: run %d checks %s: %s on main %s\n", rn.slot, short(rn.tip),
+		strings.Join(shorts(rn.shas()), " "), short(rn.base))
+	dir := r.state("runs", strconv.Itoa(rn.slot))
+	decl, err := readDeclaration(dir)
+	if err != nil {
+		fmt.Fprintf(out, "crate: %v\n", err)
+		return ErrRefused
+	}
+	rec := r.begin("check", r.slotSystem(rn.slot), rn.tip, out)
+	err = r.run(ctx, rec, system.Check, r.slotSystem(rn.slot), dir, decl, seconds(decl.Timeout, 900),
+		[]string{"CHECK_BASE=" + rn.base}, nil, out)
+	note := strings.Join(shorts(rn.shas()), " ")
+	switch {
+	case ctx.Err() != nil:
+		rec.End(record.Fail, "stopped: "+note)
+	case err != nil:
+		rec.End(record.Fail, note)
+	default:
+		rec.End(record.Pass, note)
+	}
+	return err
+}
+
+// run runs the repo's scripts/check.sh with args in a system of kind and name, made from the checkout dir as a
+// person's workspace is: its network, its services, its tools member on the repo's image, and its app. The tools
+// member's volumes are kept between runs, so they stay warm. Up and the check together stop at limit, or when ctx
+// ends. Each step goes on rec.
+func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string, decl declaration.Declaration, limit time.Duration, env, args []string, out io.Writer) error {
 	step := rec.Step(record.Image)
 	image, source, err := r.image(dir, decl, out)
 	step.End(err, string(source))
@@ -89,13 +71,6 @@ func (r *Repo) run(rec *record.Run, kind, dir string, decl declaration.Declarati
 		fmt.Fprintf(out, "crate: %v\n", err)
 		return ErrRefused
 	}
-	head, _ := work(dir, "rev-parse", "--short=12", "HEAD")
-	if kind == "check" {
-		fmt.Fprintf(out, "crate: checking %s in %s\n", head, image)
-	} else {
-		fmt.Fprintf(out, "crate: %s of %s in %s\n", kind, head, image)
-	}
-	name := r.systemName(kind)
 	folders, err := decl.Tools.Folders()
 	if err != nil {
 		fmt.Fprintf(out, "crate: %v\n", err)
@@ -108,17 +83,13 @@ func (r *Repo) run(rec *record.Run, kind, dir string, decl declaration.Declarati
 	for _, folder := range folders {
 		keep = append(keep, member.VolumeName(name, folder))
 	}
-	systemKind := system.Check
-	if kind == "postsubmit" {
-		systemKind = system.Postsubmit
-	}
 	s := system.New(machine.Default(), system.Spec{
-		Kind:     systemKind,
+		Kind:     kind,
 		Name:     name,
 		Checkout: dir,
 		Image:    image,
 		Mounts:   []system.Mount{{Path: r.Bare}},
-		Env:      append([]string{"GIT_ALTERNATE_OBJECT_DIRECTORIES=" + r.quarantine}, env...),
+		Env:      env,
 		Keep:     keep,
 		Out:      out,
 		Record:   rec,
@@ -137,15 +108,17 @@ func (r *Repo) run(rec *record.Run, kind, dir string, decl declaration.Declarati
 			fmt.Fprintf(out, "crate: %v\n", err)
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
-	past := func() error {
-		fmt.Fprintf(out, "crate: the %s ran past its limit of %ds, and was stopped\n", kind, int(limit.Seconds()))
+	stopped := func() error {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			fmt.Fprintf(out, "crate: the %s ran past its limit of %ds, and was stopped\n", kind, int(limit.Seconds()))
+		}
 		return ErrRefused
 	}
 	if err := s.Up(ctx); err != nil {
 		if ctx.Err() != nil {
-			return past()
+			return stopped()
 		}
 		fmt.Fprintf(out, "crate: %v\n", err)
 		return ErrRefused
@@ -154,8 +127,8 @@ func (r *Repo) run(rec *record.Run, kind, dir string, decl declaration.Declarati
 	code, err := s.Run(ctx, append([]string{"scripts/check.sh"}, args...), nil, out)
 	switch {
 	case ctx.Err() != nil:
-		step.End(ctx.Err(), "past the limit")
-		return past()
+		step.End(ctx.Err(), "stopped")
+		return stopped()
 	case err != nil:
 		step.End(err, "")
 		fmt.Fprintf(out, "crate: %v\n", err)
@@ -167,9 +140,6 @@ func (r *Repo) run(rec *record.Run, kind, dir string, decl declaration.Declarati
 	step.End(nil, "")
 	return nil
 }
-
-// systemName is the name of the repo's system of kind: crate-<repo>-check or crate-<repo>-postsubmit.
-func (r *Repo) systemName(kind string) string { return "crate-" + r.Name() + "-" + kind }
 
 // image is the image the check runs in: "dev" is the repo's own dev image, put on this machine by crate dev-image
 // local (its copy when the hash is unchanged, so warm); anything else is an image ref.

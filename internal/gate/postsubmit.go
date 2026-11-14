@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,23 +9,26 @@ import (
 	"strings"
 
 	"github.com/matta-kelly/crate/internal/record"
+	"github.com/matta-kelly/crate/internal/system"
 )
 
 // Postsubmit: the slow sets, too slow to hold a land, run on each new main after it moves. crate.toml's postsubmit
 // names them, as arguments to scripts/check.sh, and postsubmit_timeout their limit (3600 seconds when it names
-// none). A repo with postsubmit is released only after it passes, so no version is made from a main it failed.
+// none). A repo with postsubmit is released only after it passes, so no version is made from a main it failed. A red
+// one is undone by a revert that jumps the queue, so it is checked like any change before main takes it.
 
 // PostsubmitOf is the sets the commit's crate.toml names for postsubmit; "" for none.
 func (r *Repo) PostsubmitOf(commit string) string { return r.declarationAt(commit).Postsubmit }
 
 // Postsubmit runs the slow sets on main as it stands, one run at a time, so a run that waited tests every land since
-// the last. Green: main is the new green, and is released. Red: the commits since the last green are reverted.
+// the last. Green: main is the new green, and is released. Red: a revert of the commits since the last green enters
+// the queue first.
 func (r *Repo) Postsubmit(out io.Writer) error {
 	dir := r.state("post")
 	if err := os.MkdirAll(r.state("postsubmit"), 0o755); err != nil {
 		return err
 	}
-	if err := r.checkout(dir); err != nil {
+	if err := r.worktree(dir); err != nil {
 		return err
 	}
 	unlock, err := r.lock("postsubmit.lock")
@@ -47,7 +51,7 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 		b, _ := r.git("rev-parse", green+"^{tree}")
 		if a == b {
 			r.setGreen(main)
-			r.begin("postsubmit", main, nil).End(record.Pass, "the tree of green "+short(green))
+			r.begin("postsubmit", r.postsubmitSystem(), main, nil).End(record.Pass, "the tree of green "+short(green))
 			return nil
 		}
 	}
@@ -62,8 +66,9 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	rec := r.begin("postsubmit", main, logFile)
-	err = r.run(rec, "postsubmit", dir, decl, seconds(decl.PostsubmitTimeout, 3600), nil, strings.Fields(decl.Postsubmit), logFile)
+	rec := r.begin("postsubmit", r.postsubmitSystem(), main, logFile)
+	err = r.run(context.Background(), rec, system.Postsubmit, r.postsubmitSystem(), dir, decl,
+		seconds(decl.PostsubmitTimeout, 3600), nil, strings.Fields(decl.Postsubmit), logFile)
 	if err == nil {
 		rec.End(record.Pass, "")
 		logFile.Close()
@@ -78,14 +83,14 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 	}
 	logFile.Close()
 	step := rec.Step(record.Revert)
-	head, err := r.revertSince(green, main, path)
+	revert, err := r.revert(green, main, path)
 	if err != nil {
 		step.End(err, "")
 		rec.End(record.Fail, "not reverted: "+err.Error())
 		return ErrRefused
 	}
-	step.End(nil, head)
-	rec.End(record.Fail, "reverted by "+head)
+	step.End(nil, short(revert))
+	rec.End(record.Fail, "reverted through the queue by "+short(revert))
 	return ErrRefused
 }
 
@@ -93,10 +98,9 @@ func (r *Repo) setGreen(commit string) {
 	_ = os.WriteFile(r.state("postsubmit", "green"), []byte(commit+"\n"), 0o644)
 }
 
-// revertSince makes one commit on main that undoes green..red, landed through the check like any push, with the
-// failure's last lines in its message, and returns it. When main moved meanwhile, it goes again on the new main,
-// three times.
-func (r *Repo) revertSince(green, red, path string) (string, error) {
+// revert makes one commit on main as it stands that undoes green..red, with the failure's last lines in its message
+// and red's author as its author, and puts it first in the queue, to be checked alone. It gives the commit.
+func (r *Repo) revert(green, red, path string) (string, error) {
 	dir := r.state("post")
 	author, _ := r.git("log", "-1", "--format=%an <%ae>", red)
 	count, _ := r.git("rev-list", "--count", green+".."+red)
@@ -105,25 +109,26 @@ func (r *Repo) revertSince(green, red, path string) (string, error) {
 		count, short(green), short(red), commits, path, tail(path, 30))
 	host, _ := os.Hostname()
 	ident := []string{"-c", "user.name=crate", "-c", "user.email=crate@" + host}
-	noApply := errors.New("the revert does not apply; it needs a hand")
-	for tries := 0; tries < 3; tries++ {
-		_, _ = work(dir, "checkout", "-q", "-f", "--detach", r.main())
-		if _, err := work(dir, append(ident, "revert", "--no-commit", green+".."+red)...); err != nil {
-			_, _ = work(dir, "revert", "--abort")
-			return "", noApply
-		}
-		if _, err := work(dir, append(ident, "commit", "-q", "--author="+author, "-m", message)...); err != nil {
-			_, _ = work(dir, "revert", "--abort")
-			return "", noApply
-		}
-		pushed, err := work(dir, "push", "-q", r.Bare, "HEAD:refs/heads/main")
-		appendTo(path, pushed)
-		if err == nil {
-			head, _ := work(dir, "rev-parse", "--short=12", "HEAD")
-			return head, nil
-		}
+	_, _ = work(dir, "checkout", "-q", "-f", "--detach", r.main())
+	if _, err := work(dir, append(ident, "revert", "--no-commit", green+".."+red)...); err != nil {
+		_, _ = work(dir, "revert", "--abort")
+		return "", errors.New("the revert does not apply; it needs a hand")
 	}
-	return "", errors.New("main kept moving, or the revert's check failed")
+	if o, err := work(dir, append(ident, "commit", "-q", "--author="+author, "-m", message)...); err != nil {
+		_, _ = work(dir, "revert", "--abort")
+		return "", fmt.Errorf("the revert's commit: %s", o)
+	}
+	sha, err := work(dir, "rev-parse", "HEAD")
+	if err != nil {
+		return "", err
+	}
+	if _, err := r.git("update-ref", queueRef(sha), sha); err != nil {
+		return "", err
+	}
+	if _, err := r.Enter(sha, true); err != nil {
+		return "", err
+	}
+	return sha, r.StartWorker()
 }
 
 func tail(path string, n int) string {

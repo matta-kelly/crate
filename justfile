@@ -16,7 +16,7 @@ build:
 check: build
     go vet ./...
     go test ./...
-    "${CRATE_ENGINE:-podman}" run --rm -v "$PWD:/src:ro" -w /src {{shellcheck}} hooks/pre-receive hooks/post-receive test/hooks.test.sh test/apply.test.sh test/release.test.sh test/postsubmit.test.sh
+    "${CRATE_ENGINE:-podman}" run --rm -v "$PWD:/src:ro" -w /src {{shellcheck}} hooks/pre-receive hooks/post-receive test/lib.sh test/hooks.test.sh test/apply.test.sh test/release.test.sh test/postsubmit.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/hooks.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/apply.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/release.test.sh

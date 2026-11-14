@@ -159,3 +159,19 @@ func TestTheAppTableReadsAndABuiltAppMustNameItsPort(t *testing.T) {
 		})
 	}
 }
+
+// batch is the most changes the merge queue checks in one run: its value, DefaultBatch when absent, and a count
+// below 1 refused.
+func TestBatchIsACountOfChanges(t *testing.T) {
+	d, err := declaration.Parse([]byte("batch = 2\n"))
+	if err != nil || d.BatchSize() != 2 {
+		t.Errorf("batch = 2: expected 2, got %d, %v", d.BatchSize(), err)
+	}
+	d, err = declaration.Parse([]byte("crate = \"1\"\n"))
+	if err != nil || d.BatchSize() != declaration.DefaultBatch {
+		t.Errorf("no batch: expected %d, got %d, %v", declaration.DefaultBatch, d.BatchSize(), err)
+	}
+	if _, err := declaration.Parse([]byte("batch = -1\n")); err == nil || !strings.Contains(err.Error(), "batch") {
+		t.Errorf("batch = -1: expected an error that names batch, got %v", err)
+	}
+}

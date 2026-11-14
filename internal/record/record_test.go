@@ -93,7 +93,7 @@ func TestUnwritablePathIsDropped(t *testing.T) {
 }
 
 func TestSummaryWithNoSteps(t *testing.T) {
-	if got := Summary([]Line{{Step: Total, Seconds: 2.6, Result: Refused}}); got != "crate: total 3s, refused" {
+	if got := Summary([]Line{{Step: Total, Seconds: 2.6, Result: Fail}}); got != "crate: total 3s, fail" {
 		t.Errorf("summary = %q", got)
 	}
 }

@@ -29,7 +29,7 @@ GITHUB_BASE=$tmp/github
 REPOS=\"a b\""
 
 out=$("$root/bin/crate" apply - <<<"$conf" 2>&1)
-if [ "$(git -C "$tmp/git/a.git" config core.hooksPath)" = "$root/hooks" ] && [ -d "$tmp/git/b.git/crate/work/.git" ]; then
+if [ "$(git -C "$tmp/git/a.git" config core.hooksPath)" = "$root/hooks" ] && [ "$(git -C "$tmp/git/b.git" config receive.advertisePushOptions)" = true ]; then
   ok "each repo gets a bare repo with crate's hooks"
 else not_ok "each repo gets a bare repo with crate's hooks" "$out"; fi
 

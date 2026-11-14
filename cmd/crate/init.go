@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/matta-kelly/crate/internal/gate"
 )
 
 func init() {
@@ -32,9 +34,22 @@ func initVerb(args []string) error {
 	return initRepo(args[0], github, os.Stdout, true)
 }
 
-// initRepo makes or takes the bare repo, sets its hooks to this install's, refuses non-fast-forwards and deletions,
-// and makes the check's checkout. With a GitHub url, main is copied there after each move: an ssh url gets the
-// repo's own deploy key, made here once (~/.ssh/crate-<repo>), and its public half is printed.
+// installRoot is the folder that holds this binary's bin/ and hooks/.
+func installRoot() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	if self, err = filepath.EvalSymlinks(self); err != nil {
+		return "", err
+	}
+	return filepath.Dir(filepath.Dir(self)), nil
+}
+
+// initRepo makes or takes the bare repo, sets its hooks to this install's, refuses non-fast-forwards, and hands push
+// options to the hooks (crate.wait=no). Deletions are the door's to judge: only a queue entry may be deleted. With a
+// GitHub url, main is copied there after each move: an ssh url gets the repo's own deploy key, made here once
+// (~/.ssh/crate-<repo>), and its public half is printed.
 func initRepo(bare, github string, out io.Writer, say bool) error {
 	root, err := installRoot()
 	if err != nil {
@@ -49,7 +64,8 @@ func initRepo(bare, github string, out io.Writer, say bool) error {
 			return fmt.Errorf("git init %s: %s", bare, o)
 		}
 	}
-	for _, kv := range [][2]string{{"core.hooksPath", filepath.Join(root, "hooks")}, {"receive.denyNonFastForwards", "true"}, {"receive.denyDeletes", "true"}} {
+	for _, kv := range [][2]string{{"core.hooksPath", filepath.Join(root, "hooks")}, {"receive.denyNonFastForwards", "true"},
+		{"receive.denyDeletes", "false"}, {"receive.advertisePushOptions", "true"}} {
 		if o, err := git("config", kv[0], kv[1]); err != nil {
 			return fmt.Errorf("git config %s: %s", kv[0], o)
 		}
@@ -88,28 +104,16 @@ func initRepo(bare, github string, out io.Writer, say bool) error {
 			}
 		}
 	}
-	work := filepath.Join(bare, "crate", "work")
-	if _, err := os.Stat(filepath.Join(work, ".git")); os.IsNotExist(err) {
-		if o, err := exec.Command("git", "init", "-q", work).CombinedOutput(); err != nil {
-			return fmt.Errorf("git init %s: %s", work, o)
-		}
-		abs, err := filepath.Abs(bare)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(work, ".git", "objects", "info", "alternates"), []byte(filepath.Join(abs, "objects")+"\n"), 0o644); err != nil {
-			return err
-		}
-	}
 	if say {
-		fmt.Fprintf(out, "crate: %s checks every push to main\n", bare)
+		fmt.Fprintf(out, "crate: %s keeps main through its merge queue\n", bare)
 	}
 	return nil
 }
 
 // applyVerb makes this server match its declaration, KEY=value lines: GIT_HOME, where the bare repos live;
 // GITHUB_BASE, the url each repo's copy goes to, before /<repo>.git; REPOS, the repos. Safe to run again: it inits
-// each repo, and seeds a new one's main from GitHub. The binary's own version is its install's.
+// each repo, seeds a new one's main from GitHub, and starts the worker of a repo whose queue holds changes, so a
+// worker that stopped is started again. The binary's own version is its install's.
 func applyVerb(args []string) error {
 	if len(args) != 1 {
 		return usagef("%s", applyUsage)
@@ -152,6 +156,12 @@ func applyVerb(args []string) error {
 			return err
 		}
 		if exec.Command("git", "-C", bare, "rev-parse", "-q", "--verify", "refs/heads/main").Run() == nil {
+			if r, err := gate.Open(bare); err == nil {
+				if err := r.StartWorker(); err != nil {
+					fmt.Fprintf(os.Stderr, "crate: %s: its worker did not start: %v\n", repo, err)
+					failed = true
+				}
+			}
 			continue
 		}
 		if exec.Command("git", "-C", bare, "fetch", "-q", "github", "main:refs/heads/main").Run() == nil {

@@ -77,6 +77,7 @@ type Declaration struct {
 	Packages          string `toml:"packages"`
 	Postsubmit        string `toml:"postsubmit"`
 	PostsubmitTimeout string `toml:"postsubmit_timeout"`
+	Batch             int    `toml:"batch"`
 	Name              string `toml:"name"`
 	Services          string `toml:"services"`
 	Dev               Dev    `toml:"dev"`
@@ -101,6 +102,9 @@ func Parse(data []byte) (Declaration, error) {
 		}
 		return Declaration{}, fmt.Errorf("crate.toml: %w", err)
 	}
+	if d.Batch < 0 {
+		return Declaration{}, fmt.Errorf("crate.toml: batch is %d: expected a count of changes, 1 or more", d.Batch)
+	}
 	if d.App.Build != "" && len(d.App.Ports) == 0 {
 		return Declaration{}, fmt.Errorf("crate.toml: [app] build has no [[app.ports]]: a built app must say the port it serves")
 	}
@@ -115,4 +119,15 @@ func Parse(data []byte) (Declaration, error) {
 		}
 	}
 	return d, nil
+}
+
+// DefaultBatch is the most changes the merge queue checks in one run when crate.toml names no batch.
+const DefaultBatch = 4
+
+// BatchSize is the most changes the merge queue checks in one run: batch, or DefaultBatch when it names none.
+func (d Declaration) BatchSize() int {
+	if d.Batch > 0 {
+		return d.Batch
+	}
+	return DefaultBatch
 }

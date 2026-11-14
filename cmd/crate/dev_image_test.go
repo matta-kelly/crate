@@ -2,7 +2,7 @@ package main_test
 
 // The tests of `crate dev-image`, ported from kinetic's templates/repo/scripts/dev-image.test.sh (the cases
 // from `# --- hash ---` to `# --- usage ---`), and the cases the Go verb adds. They run the built binary,
-// the way the gate and a workflow call it.
+// the way the merge queue and a workflow call it.
 
 import (
 	"os"

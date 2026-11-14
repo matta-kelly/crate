@@ -1,13 +1,18 @@
-// Package gate is crate's guard of a repo's main on the server: the check before main moves, the copy to GitHub
-// after, postsubmit, and the release. A hook runs in the bare repo. Its state lives beside it, in <bare>/crate:
+// Package gate is crate's merge queue on a repo's main on the server, and what follows a move of main: the copy to
+// GitHub, postsubmit and the release. Main moves only to a tree that passed its check, and only the queue moves it.
+// A hook runs in the bare repo. The queue's state lives beside it, in <bare>/crate:
 //
-//	work/              the check's checkout: a repo of its own that borrows the bare repo's objects, kept warm
+//	queue.json         the queue: its changes in order
+//	queue.lock         one writer of queue.json at a time
+//	queue/<sha>.log    each change's output, from every run it is in, ending in its verdict
+//	worker.lock        held by the repo's one worker while it runs
+//	worker.log         the worker's own output
+//	runs/<n>/          run n's checkout: a worktree of the bare repo, kept warm
 //	post/              postsubmit's checkout, kept the same way
-//	lock               one check at a time per repo: the merge queue
 //	release.lock       one release at a time, so two moves of main are released in order
 //	postsubmit.lock    one postsubmit at a time
 //	postsubmit/        green (the last main that passed), <sha>.log (each run's output), run.log
-//	log.jsonl          the record: one JSON line per step of each check, postsubmit, mirror and release
+//	log.jsonl          the record: one JSON line per step of each run: check, land, postsubmit, mirror, release
 package gate
 
 import (
@@ -25,24 +30,21 @@ import (
 
 // Repo is one bare repo on the server.
 type Repo struct {
-	Bare       string   // the bare repo, absolute
-	bareEnv    []string // the hook's env, which reads the pushed objects from git's quarantine
-	quarantine string   // GIT_QUARANTINE_PATH while a pre-receive runs, else ""
+	Bare    string   // the bare repo, absolute
+	bareEnv []string // the hook's env: in pre-receive, it reads the pushed objects from git's quarantine
 }
 
 // Open is the bare repo at bare. It takes the process's env as the bare repo's, then clears what points git at the
-// bare repo, so every other program crate runs (a checkout's git, the dev image, podman) sees a plain env, with the
-// quarantine as an alternate so a checkout reads the pushed objects.
+// bare repo, so every other program crate runs (a checkout's git, the dev image, podman) sees a plain env.
 func Open(bare string) (*Repo, error) {
 	abs, err := filepath.Abs(bare)
 	if err != nil {
 		return nil, err
 	}
-	r := &Repo{Bare: abs, bareEnv: os.Environ(), quarantine: os.Getenv("GIT_QUARANTINE_PATH")}
-	for _, key := range []string{"GIT_DIR", "GIT_QUARANTINE_PATH", "GIT_OBJECT_DIRECTORY"} {
+	r := &Repo{Bare: abs, bareEnv: os.Environ()}
+	for _, key := range []string{"GIT_DIR", "GIT_QUARANTINE_PATH", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES"} {
 		os.Unsetenv(key)
 	}
-	os.Setenv("GIT_ALTERNATE_OBJECT_DIRECTORIES", r.quarantine)
 	return r, nil
 }
 
@@ -88,34 +90,51 @@ func work(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), err
 }
 
-// checkout makes the checkout dir, borrowing the bare repo's objects, when it is not there yet.
-func (r *Repo) checkout(dir string) error {
+// worktree makes dir a worktree of the bare repo, detached, when it is not one yet. A worktree shares the bare repo's
+// objects and refs, so a commit made in it is the bare repo's at once.
+func (r *Repo) worktree(dir string) error {
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 		return nil
 	}
-	if out, err := work(".", "init", "-q", dir); err != nil {
-		return fmt.Errorf("git init %s: %s", dir, out)
+	_ = os.RemoveAll(dir)
+	_, _ = r.git("worktree", "prune")
+	if _, err := r.git("worktree", "add", "-q", "--detach", dir); err != nil {
+		return err
 	}
-	return os.WriteFile(filepath.Join(dir, ".git", "objects", "info", "alternates"), []byte(filepath.Join(r.Bare, "objects")+"\n"), 0o644)
+	return nil
+}
+
+// dropWorktree removes the worktree at dir, and what git keeps of it.
+func (r *Repo) dropWorktree(dir string) {
+	_, _ = r.git("worktree", "remove", "--force", dir)
+	_ = os.RemoveAll(dir)
+	_, _ = r.git("worktree", "prune")
 }
 
 // begin starts a run of kind on commit, on the repo's record, <bare>/crate/log.jsonl. Its summary goes to out; a nil
 // out prints none.
-func (r *Repo) begin(kind, commit string, out io.Writer) *record.Run {
-	line := record.Line{Kind: kind, Repo: r.Name(), Commit: commit}
-	if kind == "check" || kind == "postsubmit" {
-		line.System = r.systemName(kind)
-	}
-	return record.Start(r.state("log.jsonl"), out, line)
+func (r *Repo) begin(kind, system, commit string, out io.Writer) *record.Run {
+	return record.Start(r.state("log.jsonl"), out, record.Line{Kind: kind, Repo: r.Name(), System: system, Commit: commit})
 }
 
 // lock takes the lock file name, waiting for it. The lock is freed when the process ends, or by the func it gives.
-func (r *Repo) lock(name string) (func(), error) {
+func (r *Repo) lock(name string) (func(), error) { return r.flock(name, syscall.LOCK_EX) }
+
+// tryLock takes the lock file name when it is free, and says whether it took it.
+func (r *Repo) tryLock(name string) (func(), bool) {
+	unlock, err := r.flock(name, syscall.LOCK_EX|syscall.LOCK_NB)
+	return unlock, err == nil
+}
+
+func (r *Repo) flock(name string, how int) (func(), error) {
+	if err := os.MkdirAll(r.state(), 0o755); err != nil {
+		return nil, err
+	}
 	f, err := os.OpenFile(r.state(name), os.O_CREATE|os.O_RDWR, 0o644)
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := syscall.Flock(int(f.Fd()), how); err != nil {
 		f.Close()
 		return nil, err
 	}
@@ -147,7 +166,7 @@ func (r *Repo) CopyMain(commit string) error {
 	if !r.hasGithub() {
 		return nil
 	}
-	rec := r.begin("mirror", commit, nil)
+	rec := r.begin("mirror", "", commit, nil)
 	if _, err := r.git("push", "-q", "github", commit+":refs/heads/main"); err != nil {
 		rec.End(record.Fail, err.Error())
 		return err
