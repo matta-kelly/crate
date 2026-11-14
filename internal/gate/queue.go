@@ -15,7 +15,9 @@ import (
 )
 
 // The queue: the changes waiting to land on main, in order. A change is a commit, held by its ref refs/queue/<sha>
-// until its verdict, so its objects stay. Its state is in queue.json, which only a holder of queue.lock writes.
+// until its verdict, so its objects stay. Its state is in queue.json, which only a holder of queue.lock writes. A
+// change that lands is kept as refs/landed/<sha>, at the main commit it landed as: the verdict a client reads, since
+// main may hold the change as commits of its own.
 
 // Entry is one change in the queue.
 type Entry struct {
@@ -33,6 +35,8 @@ const (
 )
 
 func queueRef(sha string) string { return "refs/queue/" + sha }
+
+func landedRef(sha string) string { return "refs/landed/" + sha }
 
 func (r *Repo) entryLog(sha string) string { return r.state("queue", sha+".log") }
 
@@ -135,16 +139,18 @@ func (r *Repo) Leave(sha, why string) error {
 	if err != nil || gone == nil {
 		return err
 	}
-	r.verdict(*gone, false, why)
+	r.verdict(*gone, "", why)
 	return nil
 }
 
-// verdict ends a change: its last line, its ref gone, and its land run on the record: the wait from entering to its
-// first run, and the whole of it.
-func (r *Repo) verdict(e Entry, landed bool, text string) {
-	line, result := notLandedPrefix+text, record.Fail
-	if landed {
-		line, result = landedPrefix+short(e.Sha)+" as "+text, record.Pass
+// verdict ends a change: landed as the main commit as, or not landed for why when as is "". Its last line, its ref
+// gone (refs/landed/<sha> at as when it landed, first, so a client never sees neither), and its land run on the
+// record: the wait from entering to its first run, and the whole of it.
+func (r *Repo) verdict(e Entry, as, why string) {
+	line, result, text := notLandedPrefix+why, record.Fail, why
+	if as != "" {
+		_, _ = r.git("update-ref", landedRef(e.Sha), as)
+		line, result, text = landedPrefix+short(e.Sha)+" as "+short(as), record.Pass, short(as)
 	}
 	appendTo(r.entryLog(e.Sha), line)
 	_, _ = r.git("update-ref", "-d", queueRef(e.Sha))

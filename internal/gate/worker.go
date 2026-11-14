@@ -134,7 +134,7 @@ func (w *worker) settle() bool {
 		w.r.after(head.tip, io.MultiWriter(w.out, logs))
 		closeLogs()
 		for _, e := range landed {
-			w.r.verdict(e, true, short(head.tip))
+			w.r.verdict(e, head.tip, "")
 		}
 		changed = true
 	}
@@ -171,7 +171,7 @@ func (r *Repo) land(rn *run) ([]Entry, error) {
 func (w *worker) fail(rn *run) {
 	if len(rn.changes) == 1 {
 		for _, e := range w.take(rn.shas()) {
-			w.r.verdict(e, false, "its check failed (the output above)")
+			w.r.verdict(e, "", "its check failed (the output above)")
 		}
 		return
 	}
@@ -222,13 +222,13 @@ func (w *worker) fill(q []Entry) {
 		}
 		if err != nil {
 			for _, e := range w.take(shasOf(take)) {
-				w.r.verdict(e, false, "crate could not make its tree: "+err.Error())
+				w.r.verdict(e, "", "crate could not make its tree: "+err.Error())
 			}
 			continue
 		}
 		for sha, why := range out {
 			for _, e := range w.take([]string{sha}) {
-				w.r.verdict(e, false, why)
+				w.r.verdict(e, "", why)
 			}
 		}
 		if len(in) == 0 {

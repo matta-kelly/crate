@@ -104,12 +104,17 @@ guesses neither, and refuses a `crate.toml` that lacks one, in the queue too.
 A repo's main lives in a bare repo on the server, and moves only to a tree that passed its check. Only the queue moves
 it: a change enters the queue, the queue checks it on top of the changes ahead of it, and lands it when it passes.
 
+`crate land [--no-wait]`, in a checkout whose remote `server` is the bare repo, is how a change lands: HEAD enters the
+queue, and the push prints the check's output and the verdict. Landed, it exits 0, HEAD's branch moves to main, and the
+repo's main checkout fast-forwards; not landed, it exits 1. `--no-wait` returns once HEAD is queued. A change already
+in the queue is waited for.
+
 ```
 the merge queue: main moves only to a tree that passed, and only the queue moves it
 ├── the door (pre-receive): what a push may do
 │   ├── refs/queue/<sha>: the change enters the queue; <sha> is its commit, which shares history with main
 │   ├── :refs/queue/<sha>: it leaves the queue
-│   └── main is never pushed; a version tag is refused; other branches are free, and kept
+│   └── main is never pushed, nor refs/landed; a version tag is refused; other branches are free, and kept
 ├── the queue: its changes in order, each held by its ref until its verdict
 ├── the worker: one per repo, while changes wait
 │   ├── runs side by side, as many as the machine's [count] check, each in its own slot: a worktree
@@ -122,7 +127,8 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 │   └── a run fails: the runs behind it start again without it. Its failure counts once every run ahead has passed;
 │       then a change checked alone leaves, and a batch is checked again in halves until the culprit is alone
 └── the verdict: the push waits, printing its change's output until its last line,
-    `crate: landed <sha> as <main>` or `crate: not landed: <why>`; `git push -o crate.wait=no` returns once queued
+    `crate: landed <sha> as <main>` or `crate: not landed: <why>`; `git push -o crate.wait=no` returns once queued.
+    A change that lands is kept as refs/landed/<sha>, at the main commit it landed as: the verdict a client reads
 ```
 
 - the check: `scripts/check.sh` in a workspace of kind check (its services, its tools member on the repo's `image`, its

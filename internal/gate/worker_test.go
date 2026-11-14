@@ -178,6 +178,9 @@ func TestARedHeadLeavesAndTheNextLandsWithoutIt(t *testing.T) {
 	if !strings.HasPrefix(f.verdict(a), notLandedPrefix) || !strings.HasPrefix(f.verdict(b), landedPrefix) {
 		t.Errorf("verdicts: %q, %q", f.verdict(a), f.verdict(b))
 	}
+	if refs := f.git(f.repo.Bare, "for-each-ref", "--format=%(refname)", "refs/landed/"); refs != landedRef(b) {
+		t.Errorf("refs/landed: expected b's alone, got %q", refs)
+	}
 	f.empty()
 }
 
@@ -289,6 +292,9 @@ func TestAChangeOnAnOlderMainLandsOnTop(t *testing.T) {
 	}
 	if got := f.git(f.repo.Bare, "log", "-1", "--format=%an %cn", "main"); got != "t crate" {
 		t.Errorf("author and committer: expected t crate, got %q", got)
+	}
+	if got, main := f.git(f.repo.Bare, "rev-parse", landedRef(b)), f.git(f.repo.Bare, "rev-parse", "main"); got != main {
+		t.Errorf("refs/landed/<b>: expected main, %s, got %s", main, got)
 	}
 }
 

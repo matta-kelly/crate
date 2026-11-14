@@ -48,8 +48,8 @@ base=$(git rev-parse HEAD)
 echo a >a && git add a && git commit -qm a
 out=$(land)
 if [ "$(main_of "$tmp/repo.git")" = "$(git rev-parse HEAD)" ] && grep -q "base=$base" <<<"$out" &&
-  grep -q "^remote: crate: landed" <<<"$out"; then
-  ok "a green land moves main, and its verdict comes back to the push"
+  grep -q "^remote: crate: landed" <<<"$out" && [ "$(git -C "$tmp/repo.git" rev-parse "refs/landed/$(git rev-parse HEAD)")" = "$(git rev-parse HEAD)" ]; then
+  ok "a green land moves main, its verdict comes back to the push, and refs/landed keeps it"
 else not_ok "a green land moves main, and its verdict comes back to the push" "$out"; fi
 if [ "$(main_of "$tmp/github.git")" = "$(git rev-parse HEAD)" ]; then ok "main is copied to github"
 else not_ok "main is copied to github"; fi
@@ -88,6 +88,13 @@ if grep -q "is not the commit it names" <<<"$out" && grep -q "is on main already
   ok "a queue ref must be the commit it names, and not one main holds"
 else not_ok "a queue ref must be the commit it names, and not one main holds" "$out
 $out2"; fi
+
+# only crate writes refs/landed: a pushed one is refused
+out=$(git push "$tmp/repo.git" "HEAD:refs/landed/$(git rev-parse HEAD)" 2>&1)
+if grep -q "only crate writes refs/landed" <<<"$out" &&
+  ! git -C "$tmp/repo.git" rev-parse -q --verify "refs/landed/$(git rev-parse HEAD)" >/dev/null; then
+  ok "a pushed refs/landed is refused"
+else not_ok "a pushed refs/landed is refused" "$out"; fi
 
 # a branch is free to push, and is not checked; deleting it is refused
 out=$(git push "$tmp/repo.git" HEAD:refs/heads/wip 2>&1)

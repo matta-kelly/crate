@@ -32,7 +32,10 @@ func (r *Repo) admit(u Update) string {
 		return ""
 	}
 	if u.Ref == "refs/heads/main" {
-		return "main moves only through the merge queue: git land, or git push <server> HEAD:refs/queue/<its sha>"
+		return "main moves only through the merge queue: crate land, or git push <server> HEAD:refs/queue/<its sha>"
+	}
+	if strings.HasPrefix(u.Ref, "refs/landed/") {
+		return "only crate writes refs/landed: each is a change's verdict"
 	}
 	sha, ok := strings.CutPrefix(u.Ref, "refs/queue/")
 	if Zero(u.New) {
