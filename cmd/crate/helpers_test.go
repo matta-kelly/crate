@@ -5,8 +5,8 @@ package main_test
 // one line to $T/calls. The registry is $T/registry, one `<tag> <digest>` per line: `skopeo inspect` answers
 // a tag listed there, and `skopeo copy` and `podman push` add their target tag to it. This machine's store is
 // $T/local, one tag per line: `podman build -t`, `podman tag` and `podman pull` add a tag, `podman image
-// exists` reads it, and `podman image rm` removes one. The repo's smoke is a stand-in too: it logs
-// `smoke <args>` and exits $SMOKE_EXIT. Env a test sets to steer the stand-ins:
+// exists` reads it, and `podman image rm` removes one. `podman run` is the smoke: it reads the tree on stdin as a tar,
+// logs `smoke <image>: <command>` and exits $SMOKE_EXIT. Env a test sets to steer the stand-ins:
 //   FAIL=<podman subcommand>   that subcommand prints "podman <it> exploded" on stderr and exits 125
 //   HANG=<subcommand|smoke>    that call never answers (podman <sub>, skopeo <sub>, or the smoke)
 //   SKOPEO_ERR=<text>          skopeo inspect fails with this text, not "manifest unknown"
@@ -53,7 +53,7 @@ func TestMain(m *testing.M) {
 
 // fixtureDeclaration declares the fixture: its name, and the template's three inputs. crate.toml is no input, so
 // the golden hash is the inputs' alone.
-const fixtureDeclaration = "name = \"que-pasa\"\n\n[dev]\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n"
+const fixtureDeclaration = "name = \"que-pasa\"\n\n[dev]\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n\n[tools]\nsetup = \"npm ci\"\n"
 
 // the template's three inputs, each one fixed line, and one other file
 var inputFiles = map[string]string{
@@ -73,6 +73,14 @@ fi
 [ "${HANG:-}" != "$1" ] || exec sleep 60
 if [ "${FAIL:-}" = "$1" ]; then echo "podman $1 exploded" >&2; exit 125; fi
 case $1 in
+run)
+  tar -t >/dev/null || { echo "podman run: no tar on stdin" >&2; exit 98; }
+  image=; for a in "$@"; do [ "$prev" = none ] && image=$a; prev=$a; done
+  echo "smoke $image: ${!#}" >>"$T/calls"
+  echo "smoke chatter on stdout"
+  [ "${HANG:-}" != smoke ] || exec sleep 60
+  exit "${SMOKE_EXIT:-0}"
+  ;;
 push) echo "$2 sha256:$(echo "$2" | sha256sum | cut -c1-64)" >>"$T/registry" ;;
 build)
   echo "STEP 1: building on stdout"
@@ -128,13 +136,6 @@ copy)
   echo "$dst $d" >>"$T/registry"
   ;;
 esac
-`
-
-const smokeStub = `#!/usr/bin/env bash
-echo "smoke $*" >>"$T/calls"
-echo "smoke chatter on stdout"
-[ "${HANG:-}" != smoke ] || exec sleep 60
-exit "${SMOKE_EXIT:-0}"
 `
 
 const forbiddenStub = `#!/usr/bin/env bash
@@ -203,7 +204,7 @@ type result struct {
 	took time.Duration
 }
 
-// newFx makes a git repo in a folder of that name, with the three inputs, the smoke and a README
+// newFx makes a git repo in a folder of that name, with the three inputs, a crate.toml and a README
 // committed, and the stand-ins on PATH.
 func newFx(t *testing.T, folder string) *fx {
 	t.Helper()
@@ -223,7 +224,6 @@ func newFx(t *testing.T, folder string) *fx {
 	for p, c := range inputFiles {
 		f.write(p, c, 0o644)
 	}
-	f.write("scripts/dev-image-smoke.sh", smokeStub, 0o755)
 	f.write("crate.toml", fixtureDeclaration, 0o644)
 	f.git(f.repo, "init", "-q", "-b", "main")
 	f.git(f.repo, "add", "-A")

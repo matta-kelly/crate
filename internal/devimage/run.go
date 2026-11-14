@@ -19,6 +19,7 @@ type call struct {
 	dir   string
 	prog  string
 	args  []string
+	stdin io.Reader // nil for none
 }
 
 // run runs the call and ends its whole process group at the limit. The error holds the step's name.
@@ -27,7 +28,7 @@ func run(c call, stdout, stderr io.Writer) error {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, c.prog, c.args...)
 	cmd.Dir = c.dir
-	cmd.Stdout, cmd.Stderr = stdout, stderr
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = c.stdin, stdout, stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second

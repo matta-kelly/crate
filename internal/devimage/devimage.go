@@ -233,6 +233,9 @@ func (p *plan) stored(tag string) (bool, error) {
 
 // buildTo builds to <tag>-candidate and smokes that, then moves it to <tag>. The move is the last step, so
 // no <tag> reaches this machine's store unless its smoke passed. The candidate is dropped either way.
+//
+// The smoke is [tools] setup, run in the candidate with no network on a copy of the commit's tree: it proves the image
+// holds what the lockfiles name, so a workspace's setup needs no download. A repo with no setup has no smoke.
 func (p *plan) buildTo(tag string, placement machine.Placement) error {
 	candidate := tag + "-candidate"
 	defer p.drop(candidate)
@@ -244,10 +247,17 @@ func (p *plan) buildTo(tag string, placement machine.Placement) error {
 	if err := p.podman("podman build", limit.Build(), p.stderr, build...); err != nil {
 		return err
 	}
-	smoke := filepath.Join(p.root, p.smoke)
-	if err := run(call{name: "smoke " + p.smoke, limit: limit.Smoke(), dir: p.root, prog: smoke, args: []string{candidate}},
-		p.stderr, p.stderr); err != nil {
-		return err
+	if p.setup != "" {
+		tree, err := git(p.root, "archive", p.rev)
+		if err != nil {
+			return err
+		}
+		smoke := "mkdir -p /tmp/smoke && tar -x -C /tmp/smoke && cd /tmp/smoke && " + p.setup
+		args := []string{"run", "-i", "--rm", "--network", "none", candidate, "sh", "-c", smoke}
+		if err := run(call{name: "the smoke ([tools] setup with no network)", limit: limit.Smoke(), dir: p.root, prog: "podman",
+			args: args, stdin: strings.NewReader(tree)}, p.stderr, p.stderr); err != nil {
+			return err
+		}
 	}
 	return p.podman("podman tag", limit.Podman(), p.stderr, "tag", candidate, tag)
 }

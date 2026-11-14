@@ -16,7 +16,6 @@ type Dev struct {
 	Image         string   `toml:"image"`
 	Containerfile string   `toml:"containerfile"`
 	Inputs        []string `toml:"inputs"`
-	Smoke         string   `toml:"smoke"`
 }
 
 // Tools is the [tools] table: the tools member's env, the checkout's volumes, and the setup that runs in it.

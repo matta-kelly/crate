@@ -69,7 +69,7 @@ inputs = [".crate/Containerfile", "pnpm-lock.yaml", "package.json"]
 - the tools member's volumes: `<name>-<folder>`, the folder's leading dots taken away and each other character not
   `a-z` or `0-9` made `-`
 - needs: the shape of the app's binding. The image and the declaration are the same everywhere; each place gives
-  the needs its own way: a workspace and an attempt by `[tools] env`, a check by `[app] env`, production by its
+  the needs its own way: a workspace and an attempt by `[tools] env` or `up -e`, a check by `[app] env`, production by its
   own. A place that lacks one fails `up` and names it. A check first runs the built image without them, and passes
   only if it stops non-zero and its output names each one
 - the tools member reaches the app as `app`, and by `CRATE_APP_URL` (`http://<name>-<folder>-app:<first port>`). A
@@ -100,6 +100,8 @@ guesses neither, and refuses a `crate.toml` that lacks one, in the queue too.
 - `ensure`: build, smoke and push `<image>:<hash>` when the registry lacks it
 - `promote`: point `<image>:main` at `<image>:<hash>`
 - `local`: put `<image>:<hash>` in this machine's store: its copy, a pull, or a build with no push
+- the smoke: a build is kept only when `[tools] setup` passes in it with no network, on a copy of the commit's tree, so
+  the image holds what the lockfiles name and a workspace's setup downloads nothing. A repo with no setup has no smoke
 
 ## The merge queue
 

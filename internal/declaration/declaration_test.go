@@ -75,15 +75,12 @@ func TestTheDevTableReadsAsTypedValues(t *testing.T) {
 	}{
 		{"every key",
 			"name = \"que-pasa\"\n\n[dev]\nimage = \"example.test/team/custom-dev\"\ncontainerfile = \"docker/Containerfile\"\n" +
-				"inputs = [\".crate/pod.yaml\", \"docker/Containerfile\", \"package-lock.json\"]\nsmoke = \"ci/smoke.sh\"\n",
+				"inputs = [\".crate/pod.yaml\", \"docker/Containerfile\", \"package-lock.json\"]\n",
 			declaration.Dev{Image: "example.test/team/custom-dev", Containerfile: "docker/Containerfile",
-				Inputs: []string{".crate/pod.yaml", "docker/Containerfile", "package-lock.json"}, Smoke: "ci/smoke.sh"}},
+				Inputs: []string{".crate/pod.yaml", "docker/Containerfile", "package-lock.json"}}},
 		{"inputs of one path, over several lines",
 			"[dev]\ninputs = [\n  \"a b/c.txt\",\n]\n",
 			declaration.Dev{Inputs: []string{"a b/c.txt"}}},
-		{"only a smoke",
-			"crate = \"1\"\n\n[dev]\nsmoke = \"scripts/dev-image-smoke.sh\"\n",
-			declaration.Dev{Smoke: "scripts/dev-image-smoke.sh"}},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -112,7 +109,7 @@ func TestAKeyItDoesNotKnowIsAnErrorThatNamesIt(t *testing.T) {
 	rows := []struct{ name, toml, key string }{
 		{"a flat key", "crate = \"1\"\nbogus_key = \"x\"\n", "bogus_key"},
 		{"a misspelt known key", "crate = \"1\"\nshipp = \"npm\"\n", "shipp"},
-		{"a key of [dev]", "[dev]\nsmoke = \"s\"\nbogus_dev = \"x\"\n", "bogus_dev"},
+		{"a key [dev] no longer has", "[dev]\nsmoke = \"s\"\n", "smoke"},
 		{"a table", "crate = \"1\"\n\n[other]\nx = \"y\"\n", "other"},
 	}
 	for _, row := range rows {

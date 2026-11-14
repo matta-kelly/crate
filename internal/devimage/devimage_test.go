@@ -33,18 +33,15 @@ d=$(awk -v r="$ref" '$1 == r {print $2}' "$T/registry" | tail -1)
 echo "$d"
 `
 
-const smokeStub = "#!/usr/bin/env bash\necho \"smoke $*\" >>\"$T/calls\"\n"
-
-// given: a checkout in a folder que-pasa with the three inputs, a smoke and a crate.toml that declares them, and the
-// stand-ins on PATH.
+// given: a checkout in a folder que-pasa with the three inputs and a crate.toml that declares them, and the stand-ins on
+// PATH.
 func given(t *testing.T) (root, calls string) {
 	t.Helper()
 	dir := t.TempDir()
 	root = filepath.Join(dir, "que-pasa")
 	files := map[string]string{
 		".crate/pod.yaml": "a\n", ".crate/Containerfile": "b\n", "package-lock.json": "c\n",
-		"scripts/dev-image-smoke.sh": smokeStub,
-		"crate.toml":                 "name = \"que-pasa\"\n\n[dev]\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n",
+		"crate.toml": "name = \"que-pasa\"\n\n[dev]\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n",
 	}
 	for p, c := range files {
 		full := filepath.Join(root, p)

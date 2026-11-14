@@ -113,7 +113,7 @@ func TestEnsureBuildsSmokesAndPushesWhenTheTagIsMissing(t *testing.T) {
 	tag := image + ":" + goldenHash
 	want := strings.Join([]string{
 		"podman build -f .crate/Containerfile -t " + tag + "-candidate .",
-		"smoke " + tag + "-candidate",
+		"smoke " + tag + "-candidate: " + smokeCommand,
 		"podman tag " + tag + "-candidate " + tag,
 		"podman push " + tag,
 	}, "\n")
@@ -176,7 +176,7 @@ func TestAFailedSmokeDoesNotLeaveAGoodImage(t *testing.T) {
 	if n := count(f.calls(), "podman build"); n != 2 {
 		t.Errorf("the builds: expected 2, got %d", n)
 	}
-	if n := count(f.calls(), "smoke "); n != 2 {
+	if n := len(lines(f.callsMatching("smoke "))); n != 2 {
 		t.Errorf("the smokes: expected 2, got %d", n)
 	}
 }
@@ -286,7 +286,7 @@ func TestLocalBuildsWhenNoOneHasIt(t *testing.T) {
 	calls := f.calls()
 	for _, want := range []string{
 		"podman build -f .crate/Containerfile -t " + tag + "-candidate .",
-		"smoke " + tag + "-candidate",
+		"smoke " + tag + "-candidate: " + smokeCommand,
 		"podman tag " + tag + "-candidate " + tag,
 	} {
 		if !strings.Contains(calls, want) {
@@ -699,7 +699,7 @@ func TestARepoThatDoesNotDeclareItselfIsRefused(t *testing.T) {
 		{"no crate.toml", "", "needs name"},
 		{"no name", "[dev]\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n", "needs name"},
 		{"no [dev]", "name = \"que-pasa\"\n", "needs [dev] inputs"},
-		{"[dev] with no inputs", "name = \"que-pasa\"\n\n[dev]\nsmoke = \"scripts/dev-image-smoke.sh\"\n", "needs [dev] inputs"},
+		{"[dev] with no inputs", "name = \"que-pasa\"\n\n[dev]\ncontainerfile = \"docker/Containerfile\"\n", "needs [dev] inputs"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -810,20 +810,33 @@ func TestDevContainerfileIsWhatTheBuildReads(t *testing.T) {
 	}
 }
 
-func TestDevSmokeRunsWithTheImageAsItsArgument(t *testing.T) {
+// smokeCommand is the smoke of the fixture's image: its [tools] setup, in a copy of the commit's tree.
+const smokeCommand = "mkdir -p /tmp/smoke && tar -x -C /tmp/smoke && cd /tmp/smoke && npm ci"
+
+// The smoke is [tools] setup, run in the candidate with no network, on the commit's tree given on stdin.
+func TestTheSmokeIsSetupWithNoNetworkInTheCandidate(t *testing.T) {
 	f := newFx(t, "que-pasa")
-	f.script("ci/own-smoke.sh", "#!/usr/bin/env bash\necho \"own-smoke $1 [$#]\" >>\"$T/calls\"\n")
-	f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\nsmoke = \"ci/own-smoke.sh\"\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n")
 	r := f.dev(nil, "local")
 	tag := image + ":" + goldenHash
 	if r.code != 0 {
 		t.Fatalf("the exit: expected 0, got %s", r)
 	}
-	if want := "own-smoke " + tag + "-candidate [1]"; !strings.Contains(f.calls(), want) {
+	want := "podman run -i --rm --network none " + tag + "-candidate sh -c " + smokeCommand
+	if !strings.Contains(f.calls(), want) {
 		t.Errorf("the calls: expected %q, got\n%s", want, f.calls())
 	}
-	if got := f.callsMatching("smoke "); got != "" {
-		t.Errorf("the calls: expected the default smoke not to run, got\n%s", got)
+}
+
+// A repo with no [tools] setup has no smoke: the build is tagged as it is.
+func TestARepoWithNoSetupHasNoSmoke(t *testing.T) {
+	f := newFx(t, "que-pasa")
+	f.commit("crate.toml", "name = \"que-pasa\"\n\n[dev]\ninputs = [\".crate/pod.yaml\", \".crate/Containerfile\", \"package-lock.json\"]\n")
+	r := f.dev(nil, "local")
+	if r.code != 0 || strings.TrimSpace(r.out) != image+":"+goldenHash {
+		t.Fatalf("expected exit 0 and the tag, got %s", r)
+	}
+	if got := f.callsMatching("podman run", "smoke "); got != "" {
+		t.Errorf("the calls: expected no smoke, got\n%s", got)
 	}
 }
 
@@ -932,7 +945,7 @@ func TestARemoteEngineNeedsOnlyPodmanAndSkopeoOnThePath(t *testing.T) {
 	if strings.Contains(calls, "--cgroup-parent") || strings.Contains(calls, "FORBIDDEN") {
 		t.Errorf("the calls: expected no cgroup, systemd-run or user manager, got\n%s", calls)
 	}
-	allowed := regexp.MustCompile(`^(podman (image (exists|rm) |images |pull |build |tag |push )|skopeo (inspect|copy) |smoke )`)
+	allowed := regexp.MustCompile(`^(podman (image (exists|rm) |images |pull |build |tag |push |run )|skopeo (inspect|copy) |smoke )`)
 	for _, l := range lines(calls) {
 		if !allowed.MatchString(l) {
 			t.Errorf("a call outside podman image exists, images, pull, build, tag, image rm and push, and skopeo: %q", l)

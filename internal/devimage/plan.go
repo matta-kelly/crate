@@ -13,12 +13,9 @@ import (
 
 const registry = "ghcr.io/matta-kelly/"
 
-// Where every repo keeps its Containerfile and its smoke, when [dev] names no other. The inputs and the name have no
-// default: a repo declares them.
-var (
-	defaultContainerfile = ".crate/Containerfile"
-	defaultSmoke         = "scripts/dev-image-smoke.sh"
-)
+// Where every repo keeps its Containerfile, when [dev] names no other. The inputs and the name have no default: a repo
+// declares them.
+const defaultContainerfile = ".crate/Containerfile"
 
 // plan is what a repo's declaration, and the commit it is read at, say about its dev image.
 type plan struct {
@@ -28,7 +25,7 @@ type plan struct {
 	image         string // the name, with no tag
 	inputs        []string
 	containerfile string
-	smoke         string
+	setup         string // [tools] setup, the smoke of a new image: it must pass there with no network
 }
 
 // open reads the declaration at the commit and settles the image name and the [dev] roles.
@@ -53,7 +50,7 @@ func open(o Options) (*plan, error) {
 	}
 	p.inputs = dev.Inputs
 	p.containerfile = orDefault(dev.Containerfile, defaultContainerfile)
-	p.smoke = orDefault(dev.Smoke, defaultSmoke)
+	p.setup = decl.Tools.Setup
 	if !slices.Contains(p.inputs, p.containerfile) {
 		return nil, fmt.Errorf("[dev] inputs lack the Containerfile %s: the hash must cover what the build reads", p.containerfile)
 	}

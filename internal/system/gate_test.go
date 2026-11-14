@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matta-kelly/crate/internal/devimage"
 	"github.com/matta-kelly/crate/internal/system"
 )
 
@@ -283,6 +284,46 @@ func TestAFailedImageReturnsItsCallErrorAndKeepsTheSlotUntilRemove(t *testing.T)
 	}
 	if releases != 1 {
 		t.Errorf("Remove after a failed Image: expected one Release, got %d: %+v", releases, w.rec.Calls[before:])
+	}
+}
+
+// A new dev image's smoke is [tools] setup with no network, on the commit's tree: a setup that reaches out fails it and
+// keeps no image; one that needs only the tree passes, and the image is kept.
+func TestTheSmokeOfANewImageIsSetupWithNoNetwork(t *testing.T) {
+	rows := []struct {
+		name, setup string
+		pass        bool
+	}{
+		{"a setup that needs the network", "wget -q -T 5 -O /dev/null http://example.com", false},
+		{"a setup that needs only the tree", "test -f package-lock.json && test -f src/README.md", true},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			w := newWorld(t, worldOpts{Kind: system.Check, NoDevImage: true, Setup: row.setup})
+			hash, err := devimage.Hash(devimage.Options{Root: w.root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			tag := "docker.io/library/alpine:" + hash // [dev] image, the world's
+			t.Cleanup(func() { _, _ = w.podman("image", "rm", tag) })
+			if err := w.sys.Hold(); err != nil {
+				t.Fatalf("Hold: %v", err)
+			}
+			err = w.sys.Image()
+			if row.pass && err != nil {
+				t.Fatalf("Image: expected the smoke to pass, got %v", err)
+			}
+			if !row.pass && (err == nil || !strings.Contains(err.Error(), "smoke")) {
+				t.Fatalf("Image: expected the smoke to fail, got %v", err)
+			}
+			_, missing := w.podman("image", "exists", tag)
+			if row.pass == (missing != nil) {
+				t.Errorf("the tag %s: expected it kept only when the smoke passed (pass %v, exists err %v)", tag, row.pass, missing)
+			}
+			if _, err := w.podman("image", "exists", tag+"-candidate"); err == nil {
+				t.Errorf("the candidate: expected it dropped")
+			}
+		})
 	}
 }
 
