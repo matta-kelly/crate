@@ -115,7 +115,7 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 │   ├── runs side by side, as many as the machine's [count] check, each in its own slot: a worktree
 │   │   (runs/<n>) and a system (crate-<repo>-check-<n>) whose tools volumes stay warm
 │   ├── a run checks up to `batch` waiting changes (4 by default), on the tip of the run ahead: so each run checks
-│   │   what main will be. A change on that tip moves it there; any other has its commits picked onto it, its author
+│   │   what main will be. A change on that tip moves it there; any other has its commits rebased onto it, its author
 │   │   kept and crate the committer. A change that does not apply leaves, with the files it conflicts on
 │   ├── the head run passes: main moves to its tip by compare-and-swap, its changes land, then the copy to GitHub,
 │   │   and postsubmit or the release

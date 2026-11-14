@@ -7,9 +7,9 @@ import (
 )
 
 // build makes a run's tree in its checkout dir: base, then each change on top, in order, and gives its tip. A change
-// whose commit is on the tip already moves the tip to it. Any other has its own commits picked onto the tip, its
-// author kept and crate the committer, and a commit the tip holds already dropped. A change that does not apply is
-// left out, with why; the rest go on.
+// whose commit is on the tip already moves the tip to it. Any other has its own commits rebased onto the tip, its
+// author kept and crate the committer, and a commit the tip holds already dropped, as git rebase drops one. A change
+// that does not apply is left out, with why; the rest go on.
 func (r *Repo) build(dir, base string, changes []Entry) (tip string, in []Entry, out map[string]string, err error) {
 	if err := r.worktree(dir); err != nil {
 		return "", nil, nil, err
@@ -31,14 +31,14 @@ func (r *Repo) build(dir, base string, changes []Entry) (tip string, in []Entry,
 			if o, err := work(dir, "checkout", "-q", "--detach", c.Sha); err != nil {
 				return "", nil, nil, fmt.Errorf("checkout %s: %s", short(c.Sha), o)
 			}
-		} else if o, err := work(dir, append(ident, "cherry-pick", "--empty=drop", from+".."+c.Sha)...); err != nil {
+		} else if o, err := work(dir, append(ident, "rebase", "-q", "--onto", tip, from, c.Sha)...); err != nil {
 			why := "it does not apply on main and the changes ahead of it"
 			if files, _ := work(dir, "diff", "--name-only", "--diff-filter=U"); files != "" {
 				why += " (" + strings.ReplaceAll(files, "\n", ", ") + ")"
 			} else {
 				why += ": " + firstOf(o)
 			}
-			_, _ = work(dir, "cherry-pick", "--abort")
+			_, _ = work(dir, "rebase", "--abort")
 			_, _ = work(dir, "checkout", "-q", "-f", "--detach", tip)
 			out[c.Sha] = why + "; rebase onto server/main and land again"
 			continue
