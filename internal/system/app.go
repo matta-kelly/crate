@@ -21,6 +21,20 @@ import (
 type Router interface {
 	Add(workspace, network string, routes []router.Route) error
 	Remove(workspace, network string) error
+	Within() (string, error)
+}
+
+// routerEnv is CRATE_ROUTER, the router's URL from inside the workspace, for a person's workspace with routes: the
+// router is on its network, so a member reaches another workspace's app there by that workspace's host. "" for none.
+func (s *System) routerEnv(a declaration.App) (string, error) {
+	if s.spec.Kind != Work || s.spec.Router == nil || len(a.Ports) == 0 {
+		return "", nil
+	}
+	within, err := s.spec.Router.Within()
+	if err != nil {
+		return "", err
+	}
+	return "CRATE_ROUTER=" + within, nil
 }
 
 // appName is the app member's container, and its alias beside "app".
@@ -100,6 +114,13 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 		}
 		spec.Env = append(spec.Env, s.spec.Env...)
 		spec.Env = append(spec.Env, s.spec.Pass...)
+		routerEnv, err := s.routerEnv(a)
+		if err != nil {
+			return err
+		}
+		if routerEnv != "" {
+			spec.Env = append(spec.Env, routerEnv)
+		}
 		if len(s.spec.Pass) > 0 {
 			// A member's env is set when it is made, so the dev server is made again to take the names.
 			if _, err := s.call(ctx, "rm", "-f", "-t", "0", spec.Name); err != nil {

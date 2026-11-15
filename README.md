@@ -74,6 +74,10 @@ inputs = [".crate/Containerfile", "pnpm-lock.yaml", "package.json"]
   only if it stops non-zero and its output names each one
 - the tools member reaches the app as `app`, and by `CRATE_APP_URL` (`http://<name>-<folder>-app:<first port>`). A
   browser test opens `CRATE_APP_URL`: Chrome sends the top-level domain `app` to https
+- another workspace's app: a person's workspace with routes has `CRATE_ROUTER` in both members, the router's URL on
+  its network (`http://workspace-router`). A request there with the other workspace's host (the first line of its
+  `crate url`, with no port) reaches that app. Each workspace's own network keeps the rest apart; a check and an
+  attempt have no router
 - a built app needs at least one port. The dev image needs the tool `health` calls (`wget`) when the dev server runs it
 - the merge queue's keys: `crate`, `image`, `timeout`, `batch`, `ship`, `packages`, `postsubmit`, `postsubmit_timeout`
   ([The merge queue](#the-merge-queue))

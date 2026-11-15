@@ -414,6 +414,13 @@ func (s *System) tools(ctx context.Context, decl declaration.Declaration, folder
 	if url := s.appURL(decl.App); url != "" {
 		spec.Env = append(spec.Env, "CRATE_APP_URL="+url)
 	}
+	routerEnv, err := s.routerEnv(decl.App)
+	if err != nil {
+		return false, err
+	}
+	if routerEnv != "" {
+		spec.Env = append(spec.Env, routerEnv)
+	}
 
 	for _, volume := range spec.Volumes {
 		made, err := s.volumeExists(ctx, volume.Name)

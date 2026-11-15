@@ -167,6 +167,16 @@ func (r *Router) Remove(workspace, network string) error {
 	return nil
 }
 
+// Within is the router's URL from inside a workspace it serves: its container's name on the workspace's network, at
+// the port Caddy listens on there. A request to it with a workspace's host reaches that workspace's app.
+func (r *Router) Within() (string, error) {
+	c, err := r.config()
+	if err != nil {
+		return "", err
+	}
+	return "http://" + c.name, nil
+}
+
 // URLs is each of workspace's routes' URL, in order, the first route also at the workspace's own host.
 func (r *Router) URLs(workspace string) ([]string, error) {
 	c, err := r.config()

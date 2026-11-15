@@ -162,6 +162,41 @@ func TestAnAppThatNeverPassesItsHealthFailsUpWithItsLog(t *testing.T) {
 	w.mustLeaveNothing()
 }
 
+// Two person's workspaces on one router: each member has CRATE_ROUTER, and one workspace reaches the other's app through
+// it by the other's host, though their networks keep them apart.
+func TestAWorkspaceReachesAnothersAppThroughTheRouter(t *testing.T) {
+	t.Parallel()
+	r, _ := ownRouter(t)
+	app := func(word string) string {
+		return "[app]\ncommand = " + fmt.Sprintf("%q", serve(word)) + "\n" + health + "\n" + port
+	}
+	glass := newWorld(t, worldOpts{Kind: system.Work, Busybox: true, Router: r, App: app("glass")})
+	landl := newWorld(t, worldOpts{Kind: system.Work, Busybox: true, Router: r, App: app("landl")})
+	glass.up()
+	landl.up()
+
+	within, err := r.Within()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(glass.mustRun("sh", "-c", `echo "$CRATE_ROUTER"`)); got != within {
+		t.Errorf("the tools member's CRATE_ROUTER: expected %q, got %q", within, got)
+	}
+	if got := strings.TrimSpace(glass.podmanOK("exec", glass.name+"-app", "sh", "-c", `echo "$CRATE_ROUTER"`)); got != within {
+		t.Errorf("the dev server's CRATE_ROUTER: expected %q, got %q", within, got)
+	}
+	ask := `wget -qO- --header "Host: ` + landl.name + `.localhost" "$CRATE_ROUTER/"`
+	if got := strings.TrimSpace(glass.mustRun("sh", "-c", ask)); got != "landl" {
+		t.Errorf("glass asks the router for landl's host: expected landl, got %q", got)
+	}
+	for _, w := range []*world{glass, landl} {
+		if err := w.sys.Remove(nil); err != nil {
+			t.Fatalf("Remove: %v", err)
+		}
+		w.mustLeaveNothing()
+	}
+}
+
 // crate up -e: the dev server takes a need from the host's env by its name, and a second up with -e makes it again,
 // so it takes the name's new value.
 func TestAWorkspacesDevServerTakesANeedPassedByName(t *testing.T) {
