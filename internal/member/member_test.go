@@ -29,7 +29,7 @@ func TestAVolumeIsTheSystemAndTheFoldersSlug(t *testing.T) {
 // The tools member: the dev image, the checkout at its host path, keep-id and its user, HOME, the volumes,
 // the alias, the placement, and no limit of its own.
 func TestToolsGivesTheToolsMemberItsSpec(t *testing.T) {
-	root := "/home/mkultra/lot/daworks/stateball"
+	root := "/srv/checkouts/stateball"
 	spec := member.Tools(member.ToolsOptions{
 		System:    "stateball-stateball",
 		Root:      root,
