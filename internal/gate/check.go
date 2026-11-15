@@ -61,8 +61,8 @@ func (r *Repo) checkRun(ctx context.Context, rn *run) error {
 
 // run runs the repo's scripts/check.sh with args in a system of kind and name, made from the checkout dir as a
 // person's workspace is: its network, its services, its tools member on the repo's image, and its app. The tools
-// member's volumes are kept between runs, so they stay warm. Up and the check together stop at limit, or when ctx
-// ends. Each step goes on rec.
+// member's volumes are kept between runs: they hold its setup, which runs once per key (internal/system/warm.go). Up
+// and the check together stop at limit, or when ctx ends. Each step goes on rec.
 func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string, decl declaration.Declaration, limit time.Duration, env, args []string, out io.Writer) error {
 	step := rec.Step(record.Image)
 	image, source, err := r.image(dir, decl, out)

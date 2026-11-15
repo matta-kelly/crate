@@ -278,7 +278,8 @@ func TestACheckRecordsEachStepInOrder(t *testing.T) {
 			t.Errorf("the image step: expected the note %q, got %q", devimage.Stored, line.Note)
 		}
 	}
-	want := "hold:pass image:pass services:pass tools:pass setup:pass build:pass needs:pass app:pass total:pass"
+	// a check readies its kept volumes with setup before its tools member mounts them (warm.go)
+	want := "hold:pass image:pass services:pass setup:pass tools:pass build:pass needs:pass app:pass total:pass"
 	if got := strings.Join(steps, " "); got != want {
 		t.Errorf("expected the steps %q, got %q", want, got)
 	}

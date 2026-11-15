@@ -114,3 +114,20 @@ func hasPrefix(args []string, prefix string) bool {
 	}
 	return false
 }
+
+// A volume is the member's own (:U) or an overlay (:O); a member that runs once is removed when it ends (--rm), and
+// is not detached.
+func TestRunArgsMountAnOverlayAndRunAOneOff(t *testing.T) {
+	s := &System{remote: func() bool { return false }}
+	spec := member.Spec{Name: "x-prime", Image: "dev:1", Once: true,
+		Volumes: []member.Volume{{Name: "own", Path: "/r/own"}, {Name: "base", Path: "/r/base", Overlay: true}}}
+	args := s.runArgs(spec)
+	for _, want := range [][]string{{"run", "--rm", "--name", "x-prime"}, {"-v", "own:/r/own:U"}, {"-v", "base:/r/base:O"}} {
+		if !hasRunArgs(args, want...) {
+			t.Errorf("runArgs: expected %v, got %v", want, args)
+		}
+	}
+	if slices.Contains(args, "-d") {
+		t.Errorf("runArgs: expected a one-off in the foreground, got %v", args)
+	}
+}

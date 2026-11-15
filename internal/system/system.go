@@ -181,16 +181,35 @@ func (s *System) Up(ctx context.Context) (err error) {
 		return err
 	}
 
+	// A check's and postsubmit's setup runs once per key (warm.go). Readying the bases is the setup step, unless the
+	// label already sent setup to the tools member: then that is.
+	readied := ""
+	if s.gate() && decl.Tools.Setup != "" {
+		step = s.spec.Record.Step(record.Setup)
+		readied, err = s.warm(ctx, decl, folders)
+		if err != nil || readied != run {
+			step.End(err, readied)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	overlay := readied == kept || readied == primed
+
 	step = s.spec.Record.Step(record.Tools)
-	created, err := s.tools(ctx, decl, folders)
+	created, err := s.tools(ctx, decl, folders, overlay)
 	step.End(err, "")
 	if err != nil {
 		return err
 	}
-	if created && decl.Tools.Setup != "" {
+	if created && decl.Tools.Setup != "" && !overlay {
 		step = s.spec.Record.Step(record.Setup)
 		err := s.setup(ctx, decl.Tools.Setup)
-		step.End(err, "")
+		note := ""
+		if readied != "" {
+			note = run
+		}
+		step.End(err, note)
 		if err != nil {
 			return err
 		}
@@ -323,14 +342,16 @@ func (s *System) remove(keep []string, release bool) error {
 		}
 	}
 
-	container := s.spec.Name + "-tools"
-	made, err := s.containerExists(ctx, container)
-	if err != nil {
-		return err
-	}
-	if made {
-		if _, err := s.call(ctx, "rm", "-f", "-t", "0", container); err != nil {
-			return fmt.Errorf("down: the container %s is still there: %w", container, err)
+	// the tools member, and a prime a stopped run left (warm.go)
+	for _, container := range []string{s.spec.Name + "-tools", s.spec.Name + "-prime"} {
+		made, err := s.containerExists(ctx, container)
+		if err != nil {
+			return err
+		}
+		if made {
+			if _, err := s.call(ctx, "rm", "-f", "-t", "0", container); err != nil {
+				return fmt.Errorf("down: the container %s is still there: %w", container, err)
+			}
 		}
 	}
 
@@ -349,7 +370,7 @@ func (s *System) remove(keep []string, release bool) error {
 		}
 	}
 
-	made, err = s.networkExists(ctx)
+	made, err := s.networkExists(ctx)
 	if err != nil {
 		return err
 	}
@@ -398,8 +419,8 @@ func (s *System) play(ctx context.Context, services []Service, remake bool) erro
 	return nil
 }
 
-// tools makes or starts the tools member and says whether it is new, so setup runs once.
-func (s *System) tools(ctx context.Context, decl declaration.Declaration, folders []string) (bool, error) {
+// toolsSpec is the tools member's spec: the preset, the caller's mounts read-only, and its env.
+func (s *System) toolsSpec(decl declaration.Declaration, folders []string) member.Spec {
 	spec := member.Tools(member.ToolsOptions{
 		System:  s.spec.Name,
 		Root:    s.spec.Checkout,
@@ -411,6 +432,13 @@ func (s *System) tools(ctx context.Context, decl declaration.Declaration, folder
 		spec.Mounts = append(spec.Mounts, member.Mount{Source: mount.Path, Target: mount.Path, ReadOnly: true})
 	}
 	spec.Env = append(spec.Env, s.spec.Env...)
+	return spec
+}
+
+// tools makes or starts the tools member and says whether it is new, so setup runs once. With overlay, its volumes
+// are the kept ones as overlays (warm.go).
+func (s *System) tools(ctx context.Context, decl declaration.Declaration, folders []string, overlay bool) (bool, error) {
+	spec := s.toolsSpec(decl, folders)
 	if url := s.appURL(decl.App); url != "" {
 		spec.Env = append(spec.Env, "CRATE_APP_URL="+url)
 	}
@@ -420,6 +448,9 @@ func (s *System) tools(ctx context.Context, decl declaration.Declaration, folder
 	}
 	if routerEnv != "" {
 		spec.Env = append(spec.Env, routerEnv)
+	}
+	for i := range spec.Volumes {
+		spec.Volumes[i].Overlay = overlay
 	}
 
 	for _, volume := range spec.Volumes {

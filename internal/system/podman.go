@@ -107,6 +107,9 @@ func (s *System) running(ctx context.Context, name string) (bool, error) {
 // runArgs is one podman run of a member.
 func (s *System) runArgs(spec member.Spec) []string {
 	args := []string{"run", "-d", "--name", spec.Name}
+	if spec.Once {
+		args = []string{"run", "--rm", "--name", spec.Name}
+	}
 	if spec.Network != "" {
 		args = append(args, "--network", spec.Network)
 	}
@@ -153,7 +156,11 @@ func (s *System) runArgs(spec member.Spec) []string {
 		args = append(args, "-v", volume)
 	}
 	for _, volume := range spec.Volumes {
-		args = append(args, "-v", volume.Name+":"+volume.Path+":U")
+		mode := ":U"
+		if volume.Overlay {
+			mode = ":O"
+		}
+		args = append(args, "-v", volume.Name+":"+volume.Path+mode)
 	}
 	for _, env := range spec.Env {
 		args = append(args, "-e", env)

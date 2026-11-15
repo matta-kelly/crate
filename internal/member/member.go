@@ -18,10 +18,12 @@ type Mount struct {
 	ReadOnly bool
 }
 
-// Volume is a named volume at a path inside.
+// Volume is a named volume at a path inside: the member's own (owned by its user), or with Overlay its lower layer,
+// read as it is, with what the member writes kept apart and gone with the member.
 type Volume struct {
-	Name string
-	Path string
+	Name    string
+	Path    string
+	Overlay bool
 }
 
 // Spec is one member of one system. A field it does not set is the preset's or the image's.
@@ -43,6 +45,7 @@ type Spec struct {
 	Health           string
 	CPUs             string
 	Memory           string
+	Once             bool // runs its command in the foreground, and is removed when it ends
 }
 
 // ToolsOptions is what a tools member is made from.

@@ -45,7 +45,7 @@ name = "publicpersona"                 # the repo's name: its workspace's and it
 services = ".crate/pod.yaml"    # the services file, or no services
 
 [tools]
-setup = "pnpm install --frozen-lockfile"   # run once when the tools member is made
+setup = "pnpm install --frozen-lockfile"   # run once when the tools member is made; a check's, once per key
 volumes = ["node_modules", ".next"]        # checkout folders kept in volumes; ["node_modules"] when absent
 env = { POSTGRES_HOST = "postgres" }
 
@@ -126,7 +126,7 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 ├── the queue: its changes in order, each held by its ref until its verdict
 ├── the worker: one per repo, while changes wait
 │   ├── runs side by side, as many as the machine's [count] check, each in its own slot: a worktree
-│   │   (runs/<n>) and a system (crate-<repo>-check-<n>) whose tools volumes stay warm
+│   │   (runs/<n>) and a system (crate-<repo>-check-<n>) whose tools volumes hold its setup
 │   ├── a run checks up to `batch` waiting changes (4 by default), on the tip of the run ahead: so each run checks
 │   │   what main will be. A change on that tip moves it there; any other has its commits rebased onto it, its author
 │   │   kept and crate the committer. A change that does not apply leaves, with the files it conflicts on
@@ -141,6 +141,12 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 
 - the check: `scripts/check.sh` in a workspace of kind check (its services, its tools member on the repo's `image`, its
   built app), with `CHECK_BASE` the run's base, within `timeout` seconds (900 by default)
+- a check's setup runs once per key: the image (a dev image's tag is the hash of `[dev] inputs`), `[tools] setup`,
+  `volumes` and `env`. The slot's kept volumes are its bases. Setup fills them once, from a read-only checkout, and
+  each check mounts them as overlays (podman's `:O`): it reads what setup made, and what it writes is gone with it. So
+  every check starts as if setup had just run. A setup that writes outside its volumes (a `prepare` that builds into
+  the checkout) cannot fill a base: its key runs setup in each check's tools member, as a workspace does. The same
+  for postsubmit
 - `crate queue <bare>`: the queue, each change's place and what it is doing. `crate queue <bare> jump <sha>`: the
   change goes first, checked alone, and every run starts again behind it
 - a worker that stopped starts again with the next push, the next wait, or `crate apply`
@@ -173,7 +179,8 @@ a postsubmit, an `up`, a copy to GitHub (mirror) or a release.
   - `wait`: a change's time in the queue before a run took it (a land)
   - `image`: the dev image on this machine
   - `hold`: the wait for a slot on the machine
-  - `services`, `tools`, `setup` (a new tools member only)
+  - `services`, `setup` before `tools` in a check and postsubmit, its note `kept`, `primed`, `refused` (setup writes
+    outside its volumes) or `run` (in the tools member); else `tools`, `setup` (a new tools member only)
   - `build`, `needs`: the built app and the proof it refuses without its needs (a check and postsubmit)
   - `app`: started until healthy, and its routes
   - `check`: `scripts/check.sh`

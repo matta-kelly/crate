@@ -4,6 +4,7 @@ package system_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/matta-kelly/crate/internal/devimage"
+	"github.com/matta-kelly/crate/internal/record"
 	"github.com/matta-kelly/crate/internal/system"
 )
 
@@ -217,15 +219,15 @@ func TestAFailedAskFailsUpAndLeavesNothing(t *testing.T) {
 	}
 }
 
-// A second Up of the same name after a kill leaves no member of the first, and keeps the volume the caller
-// names with what the first left in it.
+// A second Up of the same name after a kill leaves no member of the first, and keeps the volume the caller names: it
+// holds what setup made, and nothing the first run wrote (warm.go).
 func TestASecondUpAfterAKillLeavesNoMemberOfTheFirst(t *testing.T) {
 	t.Parallel()
 	name := fmt.Sprintf("cratetest-%d-%d", os.Getpid(), serial.Add(1))
 	keep := name + "-node-modules"
-	w := newWorld(t, worldOpts{Kind: system.Check, Name: name, Services: true, Setup: "true", Keep: []string{keep}})
+	w := newWorld(t, worldOpts{Kind: system.Check, Name: name, Services: true, Setup: "echo made > node_modules/setupmark", Keep: []string{keep}})
 	w.up()
-	w.mustRun("sh", "-c", "echo kept > node_modules/keepmark")
+	w.mustRun("sh", "-c", "echo written > node_modules/runmark")
 	old := w.podmanOK("inspect", w.name+"-tools", "--format", "{{.Id}}")
 	w.podmanOK("kill", w.name+"-tools")
 
@@ -234,8 +236,11 @@ func TestASecondUpAfterAKillLeavesNoMemberOfTheFirst(t *testing.T) {
 	if err := w.sys.Up(ctx); err != nil {
 		t.Fatalf("Up after a kill: expected the system again, got %v", err)
 	}
-	if got := w.mustRun("cat", "node_modules/keepmark"); strings.TrimSpace(got) != "kept" {
-		t.Errorf("the kept volume: expected the mark the first left, got %q", got)
+	if got := w.mustRun("cat", "node_modules/setupmark"); strings.TrimSpace(got) != "made" {
+		t.Errorf("the kept volume: expected what setup made, got %q", got)
+	}
+	if r := w.run("test", "-e", "node_modules/runmark"); r.code == 0 {
+		t.Errorf("the kept volume: expected nothing the first run wrote, found node_modules/runmark")
 	}
 	w.podmanOK("volume", "inspect", keep)
 	if got := w.podmanOK("inspect", w.name+"-tools", "--format", "{{.Id}}"); got == old {
@@ -345,3 +350,94 @@ func TestADownThatFailsNamesWhatIsLeftAndASecondFinishes(t *testing.T) {
 	}
 }
 
+// warmRun is one check of a slot named name, on the world's system: up, the marks it reads, and Remove keeping keep.
+func warmRun(t *testing.T, w *world, keep string) (count int, leak bool) {
+	t.Helper()
+	w.up()
+	count = strings.Count(w.mustRun("cat", "node_modules/count"), "x")
+	leak = w.run("test", "-e", "node_modules/leak").code == 0
+	w.mustRun("sh", "-c", "echo leak > node_modules/leak")
+	if err := w.sys.Remove([]string{keep}); err != nil {
+		t.Fatalf("Remove: %v", err)
+	}
+	return count, leak
+}
+
+// setupNotes is the note of each setup step in the record at path, in order.
+func setupNotes(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var notes []string
+	for _, l := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var line record.Line
+		if err := json.Unmarshal([]byte(l), &line); err != nil {
+			t.Fatalf("not a JSON line: %q", l)
+		}
+		if line.Step == record.Setup {
+			notes = append(notes, line.Note)
+		}
+	}
+	return notes
+}
+
+// A check runs setup once per key: the first primes the kept volume, the next of the same key keeps it and runs no
+// setup, and each starts from what setup made, with nothing an earlier check wrote. A new key primes again.
+func TestACheckRunsSetupOncePerKey(t *testing.T) {
+	t.Parallel()
+	name := fmt.Sprintf("cratetest-%d-%d", os.Getpid(), serial.Add(1))
+	keep := name + "-node-modules"
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	w := newWorld(t, worldOpts{Kind: system.Check, Name: name, Setup: "echo x >> node_modules/count", Keep: []string{keep},
+		Record: record.Start(path, nil, record.Line{Kind: system.Check})})
+
+	for i, want := range []struct {
+		count int
+		leak  bool
+	}{{1, false}, {1, false}} {
+		if count, leak := warmRun(t, w, keep); count != want.count || leak != want.leak {
+			t.Errorf("check %d: expected setup's mark %d time(s) and no leak, got %d and leak %v", i+1, want.count, count, leak)
+		}
+	}
+	if got := strings.Join(setupNotes(t, path), " "); got != "primed kept" {
+		t.Errorf("the setup steps: expected primed, then kept, got %q", got)
+	}
+
+	toml := filepath.Join(w.root, "crate.toml")
+	data, err := os.ReadFile(toml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(toml, []byte(strings.Replace(string(data), "echo x >>", "echo xx >>", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if count, leak := warmRun(t, w, keep); count != 2 || leak {
+		t.Errorf("a new key: expected setup's new mark (two x) on a new base, and no leak, got %d and leak %v", count, leak)
+	}
+	if got := strings.Join(setupNotes(t, path), " "); got != "primed kept primed" {
+		t.Errorf("the setup steps: expected a new key to prime again, got %q", got)
+	}
+}
+
+// A setup that writes into the checkout cannot fill a base: the prime is refused once, and that key's setup runs in
+// the tools member of each check, as before, and passes.
+func TestASetupThatWritesTheCheckoutRunsInEachCheck(t *testing.T) {
+	t.Parallel()
+	name := fmt.Sprintf("cratetest-%d-%d", os.Getpid(), serial.Add(1))
+	keep := name + "-node-modules"
+	path := filepath.Join(t.TempDir(), "log.jsonl")
+	w := newWorld(t, worldOpts{Kind: system.Check, Name: name, Setup: "echo x >> node_modules/count && touch built",
+		Keep: []string{keep}, Record: record.Start(path, nil, record.Line{Kind: system.Check})})
+	warmRun(t, w, keep)
+	if _, err := os.Stat(filepath.Join(w.root, "built")); err != nil {
+		t.Errorf("the checkout: expected setup's file, got %v", err)
+	}
+	if count, _ := warmRun(t, w, keep); count != 2 {
+		t.Errorf("the second check: expected setup to have run again (two marks), got %d", count)
+	}
+	if got := strings.Join(setupNotes(t, path), " "); got != "refused run run" {
+		t.Errorf("the setup steps: expected a refused prime, then setup in each check, got %q", got)
+	}
+}
