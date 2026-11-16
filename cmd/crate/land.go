@@ -71,7 +71,7 @@ func landVerb(args []string) error {
 		return err
 	}
 	main, _ := gitOut("rev-parse", "--short", "server/main")
-	fmt.Printf("crate land: %s landed; main is %s on the server, and crate copies it to GitHub\n", sha[:7], main)
+	fmt.Printf("crate land: %s landed; main is %s on the server, and GitHub gets it once it is green\n", sha[:7], main)
 	if err := gitRun(io.Discard, "reset", "-q", "--keep", "server/main"); err != nil {
 		fmt.Fprintln(os.Stderr, "crate land: HEAD not moved to server/main: uncommitted changes in the same files")
 	}

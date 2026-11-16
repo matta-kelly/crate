@@ -47,9 +47,9 @@ echo a >a && git add a && git commit -qm a
 sha=$(git rev-parse HEAD)
 crate_land
 if [ "$code" -eq 0 ] && [ "$(main_of "$tmp/repo.git")" = "$sha" ] && [ "$(git rev-parse HEAD)" = "$sha" ] &&
-  grep -q "check passed" <<<"$out" && grep -q "crate land: ${sha:0:7} landed" <<<"$out"; then
-  ok "a green change lands, with the check's output, and exits 0"
-else not_ok "a green change lands, with the check's output, and exits 0" "code=$code
+  grep -q "check passed" <<<"$out" && grep -q "crate land: ${sha:0:7} landed; main is .* on the server, and GitHub gets it once it is green" <<<"$out"; then
+  ok "a green change lands, with the check's output, says when github gets it, and exits 0"
+else not_ok "a green change lands, with the check's output, says when github gets it, and exits 0" "code=$code
 $out"; fi
 
 # a red change is not landed: it exits 1 with crate's verdict, and main has not moved

@@ -1,5 +1,6 @@
-// Package gate is crate's merge queue on a repo's main on the server, and what follows a move of main: the copy to
-// GitHub, postsubmit and the release. Main moves only to a tree that passed its check, and only the queue moves it.
+// Package gate is crate's merge queue on a repo's main on the server, and what follows a move of main: postsubmit, and
+// once main is green, the copy to GitHub and the release. Main moves only to a tree that passed its check, and only the
+// queue moves it.
 // A hook runs in the bare repo. The queue's state lives beside it, in <bare>/crate:
 //
 //	queue.json         the queue: its changes in order

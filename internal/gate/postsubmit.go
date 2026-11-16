@@ -14,15 +14,16 @@ import (
 
 // Postsubmit: the slow sets, too slow to hold a land, run on each new main after it moves. crate.toml's postsubmit
 // names them, as arguments to scripts/check.sh, and postsubmit_timeout their limit (3600 seconds when it names
-// none). A repo with postsubmit is released only after it passes, so no version is made from a main it failed. A red
-// one is undone by a revert that jumps the queue, so it is checked like any change before main takes it.
+// none). A repo with postsubmit is published (copied to GitHub, then released) only once main passes it, so no version
+// and no deploy is made from a main it failed (after.go). A red one is undone by a revert that jumps the queue, so it
+// is checked like any change before main takes it.
 
 // PostsubmitOf is the sets the commit's crate.toml names for postsubmit; "" for none.
 func (r *Repo) PostsubmitOf(commit string) string { return r.declarationAt(commit).Postsubmit }
 
 // Postsubmit runs the slow sets on main as it stands, one run at a time, so a run that waited tests every land since
-// the last. Green: main is the new green, and is released. Red: a revert of the commits since the last green enters
-// the queue first.
+// the last. Green: main is the new green, and is published. Red: a revert of the commits since the last green enters
+// the queue first, and GitHub keeps the last green main.
 func (r *Repo) Postsubmit(out io.Writer) error {
 	dir := r.state("post")
 	if err := os.MkdirAll(r.state("postsubmit"), 0o755); err != nil {
@@ -50,8 +51,8 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 		a, _ := r.git("rev-parse", main+"^{tree}")
 		b, _ := r.git("rev-parse", green+"^{tree}")
 		if a == b {
-			r.setGreen(main)
 			r.begin("postsubmit", r.postsubmitSystem(), main, nil).End(record.Pass, "the tree of green "+short(green))
+			r.green(main, out)
 			return nil
 		}
 	}
@@ -72,8 +73,7 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 	if err == nil {
 		rec.End(record.Pass, "")
 		logFile.Close()
-		r.setGreen(main)
-		r.Release(main, out)
+		r.green(main, out)
 		return nil
 	}
 	if green == "" {
@@ -94,8 +94,10 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 	return ErrRefused
 }
 
-func (r *Repo) setGreen(commit string) {
+// green keeps commit as the last green main, then publishes it.
+func (r *Repo) green(commit string, out io.Writer) {
 	_ = os.WriteFile(r.state("postsubmit", "green"), []byte(commit+"\n"), 0o644)
+	r.publish(commit, out)
 }
 
 // revert makes one commit on main as it stands that undoes green..red, with the failure's last lines in its message

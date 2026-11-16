@@ -10,8 +10,9 @@ import (
 	"github.com/matta-kelly/crate/internal/record"
 )
 
-// Release: every move of main that a package's commits ask a bump for is a version of that package, read from the
-// commit types (Conventional Commits 1.0) as semver (SemVer 2.0). The tag is the truth, never committed back.
+// Release: every green main that changed a package's files since its last version, and whose commits ask a bump, is a
+// version of that package, read from the commit types (Conventional Commits 1.0) as semver (SemVer 2.0). The tag is
+// the truth, never committed back.
 // crate.toml's ship names how a version ships; a repo that names none has no versions. packages names the package
 // folders, "." when it names none. The package at "." is tagged v<version>; one in a folder <folder>-v<version>. A
 // package's commits are the ones that touch its folder, and, for ".", touch no other package's folder.
@@ -116,6 +117,11 @@ func (r *Repo) Release(commit string, out io.Writer) {
 			r.begin("release", "", main, nil).End(record.Fail, pkg+": no tag to count from")
 			continue
 		}
+		// A package whose files are as its last version left them is no new version, whatever its commits say: a
+		// red change and its revert ask a bump between them, and change nothing.
+		if _, err := r.git(append([]string{"diff", "--quiet", last, main, "--"}, paths...)...); err == nil {
+			continue
+		}
 		rng := last + ".." + main
 		subjects, _ := r.git(append([]string{"log", "--format=%s", rng, "--"}, paths...)...)
 		bodies, _ := r.git(append([]string{"log", "--format=%b%x00", rng, "--"}, paths...)...)
@@ -142,7 +148,7 @@ func (r *Repo) Release(commit string, out io.Writer) {
 		}
 		if _, err := r.git("push", "-q", "github", "refs/tags/"+prefix+"*:refs/tags/"+prefix+"*"); err != nil {
 			r.begin("release", "", main, nil).End(record.Fail, "the copy of the "+prefix+" tags to github")
-			fmt.Fprintln(out, "crate: the copy of the version tags to github failed; the next move copies again")
+			fmt.Fprintln(out, "crate: the copy of the version tags to github failed; the next green main copies again")
 		}
 	}
 }

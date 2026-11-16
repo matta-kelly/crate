@@ -39,15 +39,21 @@ CHECK
 has() { jq -s -e "any(.[]; $1)" "$tmp/repo.git/crate/log.jsonl" >/dev/null 2>&1; }
 record() { cat "$tmp/repo.git/crate/log.jsonl" 2>/dev/null; }
 
-# a green land: postsubmit passes, main stays, and only then is it released
+# a green land: postsubmit passes, main stays, and only then is it copied to github and released
 setup
 echo a >a && git add a && git commit -qm "feat: a"
+github_before=$(main_of "$tmp/github.git")
 out=$(land)
-if grep -q "postsubmit runs .* in the background" <<<"$out" && ! git -C "$tmp/repo.git" rev-parse -q --verify v0.1.1 >/dev/null; then
-  ok "a land does not wait for postsubmit, and is not released before it passes"
-else not_ok "a land does not wait for postsubmit, and is not released before it passes" "$out"; fi
+github_during=$(main_of "$tmp/github.git")
+if grep -q "postsubmit runs .* in the background; GitHub gets main when it passes" <<<"$out" &&
+  ! git -C "$tmp/repo.git" rev-parse -q --verify v0.1.1 >/dev/null; then
+  ok "a land does not wait for postsubmit, says when github gets main, and is not released before it passes"
+else not_ok "a land does not wait for postsubmit, says when github gets main, and is not released before it passes" "$out"; fi
 settle
 head=$(git rev-parse HEAD)
+if [ "$github_during" = "$github_before" ] && [ "$(main_of "$tmp/github.git")" = "$head" ]; then
+  ok "github gets main only once postsubmit passes"
+else not_ok "github gets main only once postsubmit passes" "before=$github_before during=$github_during after=$(main_of "$tmp/github.git") head=$head"; fi
 if [ "$(main_of "$tmp/repo.git")" = "$head" ] &&
   has ".kind == \"postsubmit\" and .commit == \"$head\" and .step == \"total\" and .result == \"pass\""; then
   ok "a green postsubmit leaves main as it is"
@@ -67,6 +73,7 @@ good=$(git rev-parse HEAD)
 echo fail >slow && git commit -qam "fix: breaks the slow set"
 red=$(git rev-parse HEAD)
 land >/dev/null
+github_during=$(main_of "$tmp/github.git")
 settle
 now=$(main_of "$tmp/repo.git")
 if [ "$now" != "$red" ] && [ "$(git -C "$tmp/repo.git" rev-parse "$now^")" = "$red" ] &&
@@ -85,8 +92,9 @@ else not_ok "the failure is kept, in the revert's message and in its log" "$msg"
 if [ "$(git -C "$tmp/repo.git" tag --sort=v:refname | tr '\n' ' ')" = "v0.1.0 v0.1.1 " ]; then
   ok "a red land makes no version"
 else not_ok "a red land makes no version" "$(git -C "$tmp/repo.git" tag)"; fi
-if [ "$(main_of "$tmp/github.git")" = "$now" ]; then ok "the revert is copied to github"
-else not_ok "the revert is copied to github"; fi
+if [ "$github_during" = "$good" ] && [ "$(main_of "$tmp/github.git")" = "$now" ]; then
+  ok "github keeps the last green main while a red one is on the server, and gets the revert's"
+else not_ok "github keeps the last green main while a red one is on the server, and gets the revert's" "during=$github_during after=$(main_of "$tmp/github.git") good=$good revert=$now"; fi
 if [ "$(cat "$tmp/repo.git/crate/postsubmit/green")" = "$now" ] &&
   has ".kind == \"postsubmit\" and .commit == \"$now\" and .step == \"total\" and (.note | startswith(\"the tree of green\"))"; then
   ok "the revert itself passes postsubmit with no run: its tree is green's"

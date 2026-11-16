@@ -48,7 +48,7 @@ func installRoot() (string, error) {
 
 // initRepo makes or takes the bare repo, sets its hooks to this install's, refuses non-fast-forwards, and hands push
 // options to the hooks (crate.wait=no). Deletions are the door's to judge: only a queue entry may be deleted. With a
-// GitHub url, main is copied there after each move: an ssh url gets the repo's own deploy key, made here once
+// GitHub url, main is copied there each time it is green: an ssh url gets the repo's own deploy key, made here once
 // (~/.ssh/crate-<repo>), and its public half is printed.
 func initRepo(bare, github string, out io.Writer, say bool) error {
 	root, err := installRoot()

@@ -130,8 +130,8 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 │   ├── a run checks up to `batch` waiting changes (4 by default), on the tip of the run ahead: so each run checks
 │   │   what main will be. A change on that tip moves it there; any other has its commits rebased onto it, its author
 │   │   kept and crate the committer. A change that does not apply leaves, with the files it conflicts on
-│   ├── the head run passes: main moves to its tip by compare-and-swap, its changes land, then the copy to GitHub,
-│   │   and postsubmit or the release
+│   ├── the head run passes: main moves to its tip by compare-and-swap, and its changes land. Then postsubmit, when
+│   │   the repo has one; once main is green, the copy to GitHub and the release
 │   └── a run fails: the runs behind it start again without it. Its failure counts once every run ahead has passed;
 │       then a change checked alone leaves, and a batch is checked again in halves until the culprit is alone
 └── the verdict: the push waits, printing its change's output until its last line,
@@ -152,9 +152,14 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 - a worker that stopped starts again with the next push, the next wait, or `crate apply`
 - postsubmit: the slow sets, in a workspace of kind postsubmit, after main moves, one run at a time. Red puts a revert
   to the last green main first in the queue
-- release: each move of main tags a version of each of `packages` whose commits ask for one (Conventional Commits as
-  semver; before 1.0.0 each bump moves down a place). The tag is the truth, and `ship` names how it publishes. A
-  package's first version is tagged by hand in the bare repo: `git -C <bare> tag v<version> <commit>`
+- green: a main that passed every set it has, the gate's and postsubmit's. A repo with no postsubmit is green as it
+  lands. Only a green main is copied to GitHub and released, so GitHub, and whatever builds or deploys from it, never
+  sees a main postsubmit failed: a red main stays on the server until its revert lands, and the copy after that carries
+  both
+- release: each green main tags a version of each of `packages` whose files changed since its last version and whose
+  commits ask for one (Conventional Commits as semver; before 1.0.0 each bump moves down a place). The tag is the
+  truth, and `ship` names how it publishes. A package's first version is tagged by hand in the bare repo:
+  `git -C <bare> tag v<version> <commit>`
 - `crate init <bare> [<github url>]`: put the hooks on a bare repo. `crate apply <file|->`: make a server match its
   declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`). A new repo's main is seeded from GitHub's. crate's own version is
   its install's

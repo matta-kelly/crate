@@ -36,12 +36,14 @@ land() {
 # queue: HEAD into the queue with -o crate.wait=no, so the push returns once it is queued; prints its output.
 queue() { git push -o crate.wait=no "$tmp/repo.git" "HEAD:refs/queue/$(git rev-parse HEAD)" 2>&1; }
 
-# settle: wait, a minute at most, until the repo's worker and postsubmit are done.
+# settle: wait, a minute at most, until the repo's worker and postsubmit are done. One still running after it says so,
+# so a case that then fails is read as slow, not wrong.
 settle() {
   for _ in $(seq 1 120); do
     pgrep -f "crate (queue|postsubmit) $tmp/repo.git" >/dev/null || return 0
     sleep 0.5
   done
+  echo "# settle: crate's worker or postsubmit still runs after a minute: $(pgrep -fa "crate (queue|postsubmit) $tmp/repo.git" | head -3)"
 }
 
 # sweep: what the suite's runs leave on the engine: the workers, and the kept volumes of its systems.

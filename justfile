@@ -20,7 +20,8 @@ check: build
     CRATE_ROOT="$PWD/dist/crate" test/hooks.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/apply.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/release.test.sh
-    CRATE_ROOT="$PWD/dist/crate" test/postsubmit.test.sh test/land.test.sh
+    CRATE_ROOT="$PWD/dist/crate" test/postsubmit.test.sh
+    CRATE_ROOT="$PWD/dist/crate" test/land.test.sh
 
 # A new version: check, tag v<version>, move the major tag, put the asset on both releases. --dry-run only builds dist/crate-linux-amd64.tar.gz
 release version *flags:
