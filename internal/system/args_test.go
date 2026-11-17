@@ -131,3 +131,29 @@ func TestRunArgsMountAnOverlayAndRunAOneOff(t *testing.T) {
 		t.Errorf("runArgs: expected a one-off in the foreground, got %v", args)
 	}
 }
+
+// The podman calls that write the store, or start what does, run in the system's slice: a pull, a build, a
+// container's run or create, and a kube play. An ask, a stop or a removal runs as it is.
+func TestTheCallsThatWriteTheStoreRunInTheSlice(t *testing.T) {
+	for _, row := range []struct {
+		args   []string
+		writes bool
+	}{
+		{[]string{"pull", "docker.io/library/alpine"}, true},
+		{[]string{"build", "-f", "Containerfile", "."}, true},
+		{[]string{"run", "-d", "--name", "a", "alpine"}, true},
+		{[]string{"create", "--name", "a", "alpine"}, true},
+		{[]string{"kube", "play", "pod.yaml"}, true},
+		{[]string{"kube", "down", "pod.yaml"}, false},
+		{[]string{"rm", "-f", "a"}, false},
+		{[]string{"image", "rm", "a"}, false},
+		{[]string{"inspect", "a"}, false},
+		{[]string{"exec", "a", "true"}, false},
+		{[]string{"start", "a"}, false},
+		{nil, false},
+	} {
+		if got := writes(row.args); got != row.writes {
+			t.Errorf("podman %v: expected writes %v, got %v", row.args, row.writes, got)
+		}
+	}
+}

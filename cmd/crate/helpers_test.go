@@ -75,7 +75,7 @@ if [ "${FAIL:-}" = "$1" ]; then echo "podman $1 exploded" >&2; exit 125; fi
 case $1 in
 run)
   tar -t >/dev/null || { echo "podman run: no tar on stdin" >&2; exit 98; }
-  image=; for a in "$@"; do [ "$prev" = none ] && image=$a; prev=$a; done
+  image=; for a in "$@"; do [ "$a" = sh ] && [ -z "$image" ] && image=$prev; prev=$a; done
   echo "smoke $image: ${!#}" >>"$T/calls"
   echo "smoke chatter on stdout"
   [ "${HANG:-}" != smoke ] || exec sleep 60
@@ -172,6 +172,13 @@ func stopUserSlices(t *testing.T, prefix string) {
 	})
 }
 
+// buildSlice is where crate places a dev image's build on the fixture's machine.
+func (f *fx) buildSlice() string { return f.slice + "-work-build.slice" }
+
+// stubPATH is the stand-ins alone first, systemd's forbidden among them: for a remote engine, which must not reach the
+// user's manager.
+func (f *fx) stubPATH() string { return "PATH=" + f.bin + string(os.PathListSeparator) + os.Getenv("PATH") }
+
 // realSystemdPATH is the real systemctl and systemd-run before the fixture's stand-ins, so a test of the
 // binary's real placement keeps the stand-in podman and skopeo it needs for the build.
 func realSystemdPATH(t *testing.T, bin string) string {
@@ -187,13 +194,16 @@ func realSystemdPATH(t *testing.T, bin string) string {
 	return dir + string(os.PathListSeparator) + bin + string(os.PathListSeparator) + os.Getenv("PATH")
 }
 
-// fx is one fixture: T holds the repo, the stand-ins and their files.
+// fx is one fixture: T holds the repo, the stand-ins and their files. crate runs with the real systemctl and
+// systemd-run before the stand-ins, so it places its work as on any machine, under a slice of the fixture's own.
 type fx struct {
 	t      *testing.T
 	dir    string // T
 	repo   string
 	folder string
 	bin    string
+	slice  string
+	path   string // the real systemd first, then the stand-ins
 }
 
 // result is one run of crate.
@@ -209,7 +219,9 @@ type result struct {
 func newFx(t *testing.T, folder string) *fx {
 	t.Helper()
 	dir := t.TempDir()
-	f := &fx{t: t, dir: dir, folder: folder, repo: filepath.Join(dir, folder), bin: filepath.Join(dir, "bin")}
+	f := &fx{t: t, dir: dir, folder: folder, repo: filepath.Join(dir, folder), bin: filepath.Join(dir, "bin"), slice: testSliceName()}
+	stopUserSlices(t, f.slice)
+	f.path = realSystemdPATH(t, f.bin)
 	must(t, os.MkdirAll(f.bin, 0o755))
 	must(t, os.MkdirAll(f.repo, 0o755))
 	for _, s := range []struct{ name, body string }{
@@ -329,13 +341,14 @@ func (f *fx) run(cwd string, env []string, args ...string) result {
 	cmd := exec.CommandContext(ctx, crateBin, args...)
 	cmd.Dir = cwd
 	base := []string{
-		"PATH=" + f.bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+		"PATH=" + f.path,
 		"T=" + f.dir, "HOME=" + filepath.Join(f.dir, "home"),
 		"CRATE_MACHINE=" + filepath.Join(f.dir, "no-machine.toml"),
+		"CRATE_SLICE=" + f.slice,
 		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t",
 	}
-	cmd.Env = append(filterEnv(os.Environ(), "PATH", "CRATE_MACHINE", "CONTAINER_HOST", "FAIL", "HANG", "SKOPEO_ERR",
+	cmd.Env = append(filterEnv(os.Environ(), "PATH", "CRATE_MACHINE", "CRATE_SLICE", "CONTAINER_HOST", "FAIL", "HANG", "SKOPEO_ERR",
 		"REMOTE_GUARD", "EXISTS_EXIT", "SMOKE_EXIT", "CRATE_LIMIT_SCALE", "ENGINE", "DEV_IMAGE", "DEV_IMAGE_SMOKE"), base...)
 	cmd.Env = append(cmd.Env, env...)
 	var out, errb bytes.Buffer

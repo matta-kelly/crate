@@ -30,9 +30,39 @@ func (s *System) isRemote() bool {
 	return engineRemote()
 }
 
-// call runs a podman command, its output to the caller, and one error that names it.
+// place is the system's slice on its machine, kept for the podman calls that write the store (call).
+func (s *System) place() (machine.Placement, error) {
+	placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
+	if err != nil {
+		return "", err
+	}
+	s.placed = placement
+	return placement, nil
+}
+
+// call runs a podman command, its output to the caller, and one error that names it. A call that writes the store
+// runs in the system's slice (writes), so podman's own work, a pull or a layer's unpack and commit, is the slice's.
 func (s *System) call(ctx context.Context, args ...string) (string, error) {
+	if writes(args) {
+		prog, argv, env := s.placed.Command("podman", args...)
+		return s.run(ctx, prog, env, argv...)
+	}
 	return s.run(ctx, "podman", nil, args...)
+}
+
+// writes says a podman call writes the store or starts what does: a pull, a build, a container's run or create, and
+// a kube play.
+func writes(args []string) bool {
+	if len(args) == 0 {
+		return false
+	}
+	switch args[0] {
+	case "pull", "build", "run", "create":
+		return true
+	case "kube":
+		return len(args) > 1 && args[1] == "play"
+	}
+	return false
 }
 
 // run runs one program, its output to the caller and its error naming the step.
@@ -188,6 +218,7 @@ func (s *System) playOne(ctx context.Context, service Service, placement machine
 		_, err := s.call(ctx, args...)
 		return err
 	}
+	// The pods' containers stay in the scope, in the slice: podman makes no cgroup of its own for them.
 	conf, err := os.CreateTemp("", "crate-containers-*.conf")
 	if err != nil {
 		return err
@@ -200,9 +231,8 @@ func (s *System) playOne(ctx context.Context, service Service, placement machine
 	if err := conf.Close(); err != nil {
 		return err
 	}
-	env := append(os.Environ(), "CONTAINERS_CONF_OVERRIDE="+conf.Name())
-	args = append([]string{"--user", "--scope", "--slice=" + string(placement), "podman"}, args...)
-	_, err = s.run(ctx, "systemd-run", env, args...)
+	prog, argv, env := placement.Command("podman", args...)
+	_, err = s.run(ctx, prog, append(env, "CONTAINERS_CONF_OVERRIDE="+conf.Name()), argv...)
 	return err
 }
 

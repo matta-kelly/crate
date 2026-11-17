@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/matta-kelly/crate/internal/declaration"
-	"github.com/matta-kelly/crate/internal/devimage"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
 	"github.com/matta-kelly/crate/internal/record"
@@ -64,9 +63,11 @@ func (r *Repo) checkRun(ctx context.Context, rn *run) error {
 // member's volumes are kept between runs: they hold its setup, which runs once per key (internal/system/warm.go). Up
 // and the check together stop at limit, or when ctx ends. Each step goes on rec.
 func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string, decl declaration.Declaration, limit time.Duration, env, args []string, out io.Writer) error {
-	step := rec.Step(record.Image)
-	image, source, err := r.image(dir, decl, out)
-	step.End(err, string(source))
+	image, err := imageOf(decl)
+	if err != nil || image != "" {
+		// A ref is the image as it is; the repo's own dev image is the system's step, in its slice (System.Image).
+		rec.Step(record.Image).End(err, "")
+	}
 	if err != nil {
 		fmt.Fprintf(out, "crate: %v\n", err)
 		return ErrRefused
@@ -123,7 +124,7 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 		fmt.Fprintf(out, "crate: %v\n", err)
 		return ErrRefused
 	}
-	step = rec.Step(record.Check)
+	step := rec.Step(record.Check)
 	code, err := s.Run(ctx, append([]string{"scripts/check.sh"}, args...), nil, out)
 	switch {
 	case ctx.Err() != nil:
@@ -141,16 +142,16 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 	return nil
 }
 
-// image is the image the check runs in: "dev" is the repo's own dev image, put on this machine by crate dev-image
-// local (its copy when the hash is unchanged, so warm); anything else is an image ref.
-func (r *Repo) image(dir string, decl declaration.Declaration, out io.Writer) (string, devimage.Source, error) {
+// imageOf is the image the check runs in: an image ref as it is, or "" for "dev", the repo's own dev image, which the
+// system puts on this machine in its slice once it holds its slot (its copy when the hash is unchanged, so warm).
+func imageOf(decl declaration.Declaration) (string, error) {
 	switch decl.Image {
 	case "":
-		return "", "", errors.New("crate.toml names no image")
+		return "", errors.New("crate.toml names no image")
 	case "dev":
-		return devimage.Local(devimage.Options{Root: dir, Stderr: out}, "")
+		return "", nil
 	default:
-		return decl.Image, "", nil
+		return decl.Image, nil
 	}
 }
 

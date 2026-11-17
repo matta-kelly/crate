@@ -1,6 +1,6 @@
-// Package machine is the seam between crate and the machine it runs on: the slice each kind of crate's
-// work goes in, and the file that says how many of a kind may run. Here the default machine orders the work
-// in the user's systemd and keeps the slots.
+// Package machine is the seam between crate and the machine it runs on: the slice each kind of crate's work goes in,
+// the line crate draws under all of it, and the file that says how many of a kind may run. Here the default machine
+// bounds and orders the work in the user's systemd and keeps the slots.
 package machine
 
 import (
@@ -35,6 +35,17 @@ func CheckKind(kind string) error {
 // Placement is a slice name, or "" for none.
 type Placement string
 
+// Command is the call that runs prog with args in the placement: the call as it is with none, else systemd-run's,
+// which runs prog in a scope of its own in the slice. prog stays the caller's child, with its stdin, its output and
+// its exit code, and whatever it writes is the slice's. env is the env to run it with: nil for the caller's own.
+func (p Placement) Command(prog string, args ...string) (string, []string, []string) {
+	if p == "" {
+		return prog, args, nil
+	}
+	argv := append([]string{"--user", "--scope", "--quiet", "--collect", "--slice=" + string(p), "--", prog}, args...)
+	return "systemd-run", argv, managerEnv()
+}
+
 // Slot is a system's claim on the machine. Bind says its network exists; Release frees it.
 type Slot interface {
 	Bind()
@@ -50,7 +61,7 @@ type Machine interface {
 	Unplace(kind, system string) error
 }
 
-// noMachine is a machine crate places nothing on: a remote engine's, or one with no machine file. It still
+// noMachine is a machine crate places nothing on: a remote engine's, whose work runs on another machine. It still
 // refuses a kind outside the four.
 type noMachine struct{}
 
@@ -89,8 +100,9 @@ func (f failing) Place(kind, system string) (Placement, error) {
 	return "", f.err
 }
 
-// Default is the machine of this user and machine file. The machine's slice is CRATE_SLICE, or crate when the
-// environment names none. A machine with no file or behind a remote engine places nothing and holds nothing.
+// Default is the machine of this user and machine file, or of the defaults when there is no file. The machine's slice
+// is CRATE_SLICE, or crate when the environment names none. A machine behind a remote engine places nothing and holds
+// nothing: its work runs on the engine's machine.
 func Default() Machine {
 	if os.Getenv("CONTAINER_HOST") != "" {
 		return noMachine{}
@@ -100,7 +112,7 @@ func Default() Machine {
 		return failing{err: err}
 	}
 	if cfg == nil {
-		return noMachine{}
+		cfg = Defaults()
 	}
 	slice := os.Getenv("CRATE_SLICE")
 	if slice == "" {

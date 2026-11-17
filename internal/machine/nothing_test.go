@@ -1,7 +1,7 @@
 package machine_test
 
-// Where crate places nothing: behind a remote engine, or with no machine file, it places nothing, holds
-// nothing, and no count applies.
+// Where crate places nothing: behind a remote engine, whose work runs on another machine, it places nothing, holds
+// nothing, and no count applies. A machine with no file is not one: it places, and counts one of each kind.
 
 import (
 	"path/filepath"
@@ -40,13 +40,20 @@ func TestWithARemoteEngineNothingIsPlacedOrHeld(t *testing.T) {
 	h.waitExit(t, 30*time.Second)
 }
 
-// With no machine file, crate places nothing and holds nothing, and no count applies.
-func TestWithNoMachineFileNothingIsPlacedOrHeld(t *testing.T) {
+// With no machine file, crate still places its work under its own slice, and counts one of each kind at once: an
+// untuned machine is bounded too.
+func TestWithNoMachineFileCratePlacesAndCountsOne(t *testing.T) {
 	f := newFixture(t, 1, 1, 1)
-	systems := []string{f.system("a"), f.system("b"), f.system("c")}
-	missing := filepath.Join(t.TempDir(), "never.toml")
-	h := f.startHelper("none", machine.Work, f.system("d"),
-		"CRATE_MACHINE="+missing, "HELPER_SYSTEMS="+strings.Join(systems, ","), scaleFast)
-	noSlotIsHeld(t, f, h.waitOut(t, 30*time.Second))
-	h.waitExit(t, 30*time.Second)
+	missing := "CRATE_MACHINE=" + filepath.Join(t.TempDir(), "never.toml")
+	leaf := f.place(machine.Attempt, "que-pasa-main", missing)
+	if want := f.slice + "-" + machine.Attempt + `-que\x2dpasa\x2dmain.slice`; string(leaf) != want {
+		t.Errorf("Place with no file: expected %q, got %q", want, leaf)
+	}
+	first := f.startHelper("hold", machine.Attempt, f.system("a"), missing, "HELPER_RELEASE="+f.absent())
+	requireHeld(t, first.waitOut(t, 30*time.Second), "the first holder")
+	second := f.startHelper("hold", machine.Attempt, f.system("b"), missing, scaleFast)
+	out := second.waitOut(t, 30*time.Second)
+	if !strings.Contains(out, "count 1") {
+		t.Errorf("a second attempt with no file: expected it to wait on a count of 1, got %q", out)
+	}
 }

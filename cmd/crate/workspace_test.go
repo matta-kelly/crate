@@ -25,10 +25,11 @@ var wsSerial atomic.Int64
 
 // ws is one checkout of a tiny repo, with its own name, and real podman under it.
 type ws struct {
-	t    *testing.T
-	dir  string
-	root string
-	name string
+	t     *testing.T
+	dir   string
+	root  string
+	name  string
+	slice string // crate's slice for this test's runs, so its line and its units are the test's own
 }
 
 func newWs(t *testing.T, declared string) *ws {
@@ -36,7 +37,8 @@ func newWs(t *testing.T, declared string) *ws {
 	if _, err := exec.LookPath("podman"); err != nil {
 		t.Fatalf("these tests run on real podman: %v", err)
 	}
-	w := &ws{t: t, dir: t.TempDir()}
+	w := &ws{t: t, dir: t.TempDir(), slice: testSliceName()}
+	stopUserSlices(t, w.slice)
 	w.root = filepath.Join(w.dir, "ws")
 	if declared == "" {
 		declared = fmt.Sprintf("crtest-%d-%d", os.Getpid(), wsSerial.Add(1))
@@ -144,9 +146,10 @@ func (w *ws) runEnv(cwd string, env []string, args ...string) (result, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, crateBin, args...)
 	cmd.Dir = cwd
-	cmd.Env = append(filterEnv(os.Environ(), "CRATE_MACHINE", "CONTAINER_HOST", "CRATE_LIMIT_SCALE"),
+	cmd.Env = append(filterEnv(os.Environ(), "CRATE_MACHINE", "CRATE_SLICE", "CONTAINER_HOST", "CRATE_LIMIT_SCALE"),
 		"PATH="+os.Getenv("PATH"),
 		"CRATE_MACHINE="+filepath.Join(w.dir, "no-machine.toml"),
+		"CRATE_SLICE="+w.slice,
 		"XDG_STATE_HOME="+filepath.Join(w.dir, "state"))
 	cmd.Env = append(cmd.Env, env...)
 	var out, errb bytes.Buffer

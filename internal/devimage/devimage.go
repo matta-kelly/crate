@@ -134,7 +134,7 @@ const (
 )
 
 // Local puts <image>:<hash> in this machine's store and returns the tag and how it got there: the machine's copy,
-// else a pull, else a build and a smoke with no push. The build runs in placement.
+// else a pull, else a build and a smoke with no push. The pull, the build and the smoke run in placement.
 func Local(o Options, placement machine.Placement) (string, Source, error) {
 	p, hash, err := openAtHash(o)
 	if err != nil {
@@ -149,7 +149,7 @@ func Local(o Options, placement machine.Placement) (string, Source, error) {
 		return tag, Stored, nil
 	}
 	source := Pulled
-	if err = p.podman("podman pull", limit.Pull(), p.stderr, "pull", tag); err != nil {
+	if err = p.podmanIn(placement, "podman pull", limit.Pull(), p.stderr, "pull", tag); err != nil {
 		fmt.Fprintf(p.stderr, "crate: %v, so %s is built\n", err, tag)
 		if err = p.buildTo(tag, placement); err != nil {
 			return tag, "", err
@@ -231,7 +231,7 @@ func (p *plan) stored(tag string) (bool, error) {
 	return err == nil, err
 }
 
-// buildTo builds to <tag>-candidate and smokes that, then moves it to <tag>. The move is the last step, so
+// buildTo builds to <tag>-candidate and smokes that, both in placement, then moves it to <tag>. The move is the last step, so
 // no <tag> reaches this machine's store unless its smoke passed. The candidate is dropped either way.
 //
 // The smoke is [tools] setup, run in the candidate with no network on a copy of the commit's tree: it proves the image
@@ -244,7 +244,7 @@ func (p *plan) buildTo(tag string, placement machine.Placement) error {
 		build = append(build, "--cgroup-parent="+string(placement))
 	}
 	build = append(build, "-f", p.containerfile, "-t", candidate, ".")
-	if err := p.podman("podman build", limit.Build(), p.stderr, build...); err != nil {
+	if err := p.podmanIn(placement, "podman build", limit.Build(), p.stderr, build...); err != nil {
 		return err
 	}
 	if p.setup != "" {
@@ -253,9 +253,13 @@ func (p *plan) buildTo(tag string, placement machine.Placement) error {
 			return err
 		}
 		smoke := "mkdir -p /tmp/smoke && tar -x -C /tmp/smoke && cd /tmp/smoke && " + p.setup
-		args := []string{"run", "-i", "--rm", "--network", "none", candidate, "sh", "-c", smoke}
+		args := []string{"run", "-i", "--rm", "--network", "none"}
+		if placement != "" {
+			args = append(args, "--cgroup-parent="+string(placement))
+		}
+		args = append(args, candidate, "sh", "-c", smoke)
 		if err := run(call{name: "the smoke ([tools] setup with no network)", limit: limit.Smoke(), dir: p.root, prog: "podman",
-			args: args, stdin: strings.NewReader(tree)}, p.stderr, p.stderr); err != nil {
+			args: args, stdin: strings.NewReader(tree), in: placement}, p.stderr, p.stderr); err != nil {
 			return err
 		}
 	}
@@ -269,5 +273,10 @@ func (p *plan) drop(tag string) {
 
 // podman runs the engine from the PATH in the checkout, with all its output in out.
 func (p *plan) podman(name string, d time.Duration, out io.Writer, args ...string) error {
-	return run(call{name: name, limit: d, dir: p.root, prog: "podman", args: args}, out, out)
+	return p.podmanIn("", name, d, out, args...)
+}
+
+// podmanIn is podman in placement's slice, for a call that writes the store: what it pulls or builds is the slice's.
+func (p *plan) podmanIn(placement machine.Placement, name string, d time.Duration, out io.Writer, args ...string) error {
+	return run(call{name: name, limit: d, dir: p.root, prog: "podman", args: args, in: placement}, out, out)
 }

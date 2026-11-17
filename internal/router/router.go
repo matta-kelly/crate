@@ -321,7 +321,7 @@ func (r *Router) make(c config, networks []string) error {
 		args = append(args, "-v", filepath.Join(c.state, source)+":"+target+":Z")
 	}
 	args = append(args, image)
-	_, err = r.podman(args...)
+	_, err = callIn(placement, "RouterPodman", limit.RouterPodman(), args...)
 	return err
 }
 
@@ -364,9 +364,16 @@ func (r *Router) podman(args ...string) (string, error) {
 
 // call runs podman with a limit, and fails with podman's message, or with the limit's name when it passes.
 func call(limitName string, timeout time.Duration, args ...string) (string, error) {
+	return callIn("", limitName, timeout, args...)
+}
+
+// callIn is call in placement's slice, so what podman writes (the router image's pull) is the slice's.
+func callIn(placement machine.Placement, limitName string, timeout time.Duration, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "podman", args...)
+	prog, argv, env := placement.Command("podman", args...)
+	cmd := exec.CommandContext(ctx, prog, argv...)
+	cmd.Env = env
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()

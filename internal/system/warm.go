@@ -136,7 +136,7 @@ func (s *System) prime(ctx context.Context, decl declaration.Declaration, folder
 			spec.Mounts[i].ReadOnly = true
 		}
 	}
-	placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
+	placement, err := s.place()
 	if err != nil {
 		return err
 	}

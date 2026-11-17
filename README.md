@@ -84,14 +84,30 @@ inputs = [".crate/Containerfile", "pnpm-lock.yaml", "package.json"]
 
 ## The machine
 
-The machine's ceiling is root's, on `user.slice` (dazoo on the server, deeotee on the laptop): a memory cap, a soft line
-under it, and systemd-oomd. crate sets no limit. It only orders and counts its own work:
+crate bounds its own work on every machine it runs on, with no tuning: one line under all of it, an order between its
+kinds, and a count of each. Root's settings (dazoo on the server, deeotee on the laptop) are a backstop for the work
+crate does not run.
 
-- the order: each kind gets a slice under `CRATE_SLICE` (`crate`) with a `CPUWeight`: a person's work, then a check,
-  then postsubmit and attempts
-- the count: `/etc/crate/machine.toml` (`CRATE_MACHINE`) `[count]` says how many checks, postsubmits and attempts run
-  at once. Past it, one waits its turn, at most an hour. A slot is a file under `$XDG_STATE_HOME/crate/slots/<kind>/`
-- no file, or a remote engine (`CONTAINER_HOST`): crate places nothing, and says so once
+- the line: crate's own slice, `CRATE_SLICE` (`crate`) under the user's manager, gets a `MemoryHigh` (a quarter of the
+  machine's memory, or the machine file's `[slice] memory`), and a `CPUWeight` and an `IOWeight` of 50, below a sibling's
+  100. Past the line, the kernel reclaims and slows crate's own work, and kills nothing, so crate's memory and its page
+  cache never press on the desktop or a node's other services. The line also holds crate's unwritten data to a share
+  of it (about 0.6, measured). The properties are `--runtime`, set again by each process's first placement
+- the controllers: the line needs cpu, io and memory delegated to the user's manager. A slice that lacks one fails the
+  placement, and the error names root's fix, so crate never runs unbounded without saying so
+- the order: each kind gets a slice under crate's own with a `CPUWeight`: a person's work, then a check, then
+  postsubmit and attempts
+- the scope: every podman call that writes the store, or starts what does (a pull, a build, a container's run or
+  create, a kube play), runs as `systemd-run --user --scope` in the system's slice. So podman's own work, a layer's
+  unpack and commit, is the slice's, and not the caller's. The containers it starts get the slice as their
+  `--cgroup-parent`
+- the count: `[count]` says how many checks, postsubmits and attempts run at once. Past it, one waits its turn, at most
+  an hour. A slot is a file under `$XDG_STATE_HOME/crate/slots/<kind>/`
+- the machine file: `/etc/crate/machine.toml` (`CRATE_MACHINE`) holds crate's keys alone, `[count]` and
+  `[slice] memory` (a share, `"25%"`, or a size, `"8G"`), and a key crate does not know is an error. No file is the
+  defaults: a count of 1 for each kind, and a quarter of the memory
+- a remote engine (`CONTAINER_HOST`): its work runs on the engine's machine, so crate places nothing, holds nothing,
+  and says so once
 
 ## The dev image
 
@@ -192,7 +208,7 @@ a postsubmit, an `up`, a copy to GitHub (mirror) or a release.
   - `revert`: postsubmit's revert of a red main
   - `total`: the run, its result the run's; a land's runs from entering the queue to its verdict
 - the summary: one line at the end of a run, in its output (the push, postsubmit's log, `up`'s stderr):
-  `crate: image 2s (stored), hold 0s, tools 1s, setup 61s, build 140s, needs 3s, app 5s, check 30s; total 242s, pass`
+  `crate: hold 0s, image 2s (stored), tools 1s, setup 61s, build 140s, needs 3s, app 5s, check 30s; total 242s, pass`
 - a run with no total line was stopped. A line crate cannot write is dropped: the record never fails a run
 
 ```sh

@@ -112,7 +112,7 @@ func TestEnsureBuildsSmokesAndPushesWhenTheTagIsMissing(t *testing.T) {
 	r := f.dev(nil, "ensure")
 	tag := image + ":" + goldenHash
 	want := strings.Join([]string{
-		"podman build -f .crate/Containerfile -t " + tag + "-candidate .",
+		"podman build --cgroup-parent=" + f.buildSlice() + " -f .crate/Containerfile -t " + tag + "-candidate .",
 		"smoke " + tag + "-candidate: " + smokeCommand,
 		"podman tag " + tag + "-candidate " + tag,
 		"podman push " + tag,
@@ -285,7 +285,7 @@ func TestLocalBuildsWhenNoOneHasIt(t *testing.T) {
 	}
 	calls := f.calls()
 	for _, want := range []string{
-		"podman build -f .crate/Containerfile -t " + tag + "-candidate .",
+		"podman build --cgroup-parent=" + f.buildSlice() + " -f .crate/Containerfile -t " + tag + "-candidate .",
 		"smoke " + tag + "-candidate: " + smokeCommand,
 		"podman tag " + tag + "-candidate " + tag,
 	} {
@@ -805,7 +805,7 @@ func TestDevContainerfileIsWhatTheBuildReads(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("the exit: expected 0, got %s", r)
 	}
-	if want := "podman build -f docker/Containerfile -t " + strings.TrimSpace(r.out) + "-candidate ."; !strings.Contains(f.calls(), want) {
+	if want := "podman build --cgroup-parent=" + f.buildSlice() + " -f docker/Containerfile -t " + strings.TrimSpace(r.out) + "-candidate ."; !strings.Contains(f.calls(), want) {
 		t.Errorf("the calls: expected %q, got\n%s", want, f.calls())
 	}
 }
@@ -821,7 +821,7 @@ func TestTheSmokeIsSetupWithNoNetworkInTheCandidate(t *testing.T) {
 	if r.code != 0 {
 		t.Fatalf("the exit: expected 0, got %s", r)
 	}
-	want := "podman run -i --rm --network none " + tag + "-candidate sh -c " + smokeCommand
+	want := "podman run -i --rm --network none --cgroup-parent=" + f.buildSlice() + " " + tag + "-candidate sh -c " + smokeCommand
 	if !strings.Contains(f.calls(), want) {
 		t.Errorf("the calls: expected %q, got\n%s", want, f.calls())
 	}
@@ -926,7 +926,7 @@ func TestRevIsRefusedByVerbsThatBuildFromACheckout(t *testing.T) {
 
 func TestARemoteEngineNeedsOnlyPodmanAndSkopeoOnThePath(t *testing.T) {
 	f := newFx(t, "que-pasa")
-	env := []string{"CONTAINER_HOST=unix:///run/podman/podman.sock", "REMOTE_GUARD=1"}
+	env := []string{"CONTAINER_HOST=unix:///run/podman/podman.sock", "REMOTE_GUARD=1", f.stubPATH()}
 	tag := image + ":" + goldenHash
 	f.inRegistry(image+":main", 2)
 	hash := f.dev(env, "hash")
@@ -958,14 +958,16 @@ func TestARemoteEngineNeedsOnlyPodmanAndSkopeoOnThePath(t *testing.T) {
 
 // --- the machine seam ---
 
-func TestAMachineWithNoFileSaysOnceThatItPlacesNothing(t *testing.T) {
+// A machine with no file still places the build under crate's slice, and says nothing of it: an untuned machine is
+// bounded too.
+func TestAMachineWithNoFilePlacesTheBuildUnderCratesSlice(t *testing.T) {
 	f := newFx(t, "que-pasa")
-	local := f.dev(nil, "ensure")
-	if n := reasonLineCount(local.err); n != 1 {
-		t.Errorf("ensure that builds: expected stderr to say once that this machine places nothing, said %d times: %q", n, local.err)
+	r := f.dev(nil, "local")
+	if r.code != 0 || strings.Contains(r.err, "places nothing") {
+		t.Errorf("local that builds with no machine file: expected exit 0 and no word that it places nothing, got %s", r)
 	}
-	if hash := f.dev(nil, "hash"); reasonLineCount(hash.err) != 0 {
-		t.Errorf("hash starts no container: expected no word of the machine, got %q", hash.err)
+	if want := "--cgroup-parent=" + f.buildSlice(); !strings.Contains(f.calls(), want) {
+		t.Errorf("the build: expected it placed with %q, got\n%s", want, f.calls())
 	}
 }
 
@@ -975,7 +977,7 @@ func TestAMachineWithAFilePlacesTheBuildUnderItsSlice(t *testing.T) {
 	stopUserSlices(t, slice)
 	file := filepath.Join(f.dir, "machine.toml")
 	must(t, os.WriteFile(file, []byte("[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"), 0o644))
-	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice, "PATH=" + realSystemdPATH(t, f.bin)}, "local")
+	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice}, "local")
 	if r.code != 0 {
 		t.Errorf("local that builds, with a machine file: expected exit 0, got %s", r)
 	}

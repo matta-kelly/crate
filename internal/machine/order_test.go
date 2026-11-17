@@ -1,7 +1,8 @@
 package machine_test
 
 // The order: each kind goes in a slice of its own under the machine's slice, with a weight that puts work
-// first, a check next, postsubmit and attempt last, and crate sets no CPU or memory limit of its own.
+// first, a check next, postsubmit and attempt last. No level has a hard CPU or memory limit: crate's own line is a soft
+// one, on its slice (bound_test.go).
 
 import (
 	"runtime"
@@ -16,7 +17,7 @@ import (
 var theFour = []string{machine.Work, machine.Check, machine.Postsubmit, machine.Attempt}
 
 // Place gives <slice>-<kind>-<system>.slice under <slice>-<kind>.slice under <slice>.slice, each kind's
-// slice with a weight in the contract's order, and no CPU or memory limit on either level.
+// slice with a weight in the contract's order, and no hard CPU or memory limit on either level.
 func TestPlaceNamesEachSliceUnderItsKindAndTheMachinesSlice(t *testing.T) {
 	f := newFixture(t, 1, 1, 1)
 	weights := map[string]int{}
@@ -41,7 +42,7 @@ func TestPlaceNamesEachSliceUnderItsKindAndTheMachinesSlice(t *testing.T) {
 			props := f.show(unit, "AllowedCPUs", "MemoryMax", "MemorySwapMax", "CPUQuotaPerSecUSec")
 			for key, value := range props {
 				if !noLimit(value) {
-					t.Errorf("%s: expected no %s of crate's, got %q", unit, key, value)
+					t.Errorf("%s: expected no hard %s of crate's, got %q", unit, key, value)
 				}
 			}
 		}

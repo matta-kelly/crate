@@ -65,7 +65,7 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 		if missing := missingNeeds(a.Needs, a.Env, nil); len(missing) > 0 {
 			return fmt.Errorf("app: [app] needs %s; [app] env does not give them", strings.Join(missing, ", "))
 		}
-		placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
+		placement, err := s.place()
 		if err != nil {
 			return err
 		}
@@ -93,7 +93,7 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 		if missing := missingNeeds(a.Needs, decl.Tools.Env, append(slices.Clone(s.spec.Env), s.spec.Pass...)); len(missing) > 0 {
 			return fmt.Errorf("app: [app] needs %s; neither [tools] env nor crate up -e gives them", strings.Join(missing, ", "))
 		}
-		placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
+		placement, err := s.place()
 		if err != nil {
 			return err
 		}

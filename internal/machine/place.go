@@ -6,19 +6,35 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/matta-kelly/crate/internal/limit"
 )
 
-// ceiling is the machine file's order, placed in the user's systemd under the slice CRATE_SLICE names.
+// ceiling is the machine's bound and order, placed in the user's systemd under the slice CRATE_SLICE names.
 type ceiling struct {
-	cfg   *Config
-	slice string
+	cfg    *Config
+	slice  string
+	shaped sync.Once
+	shape  error
 }
+
+// The weights of crate's own slice: below a sibling's default of 100, so the desktop, or a node's other services, go
+// first when both want the CPU or the disk. A weight costs nothing on an idle machine.
+const (
+	sliceCPUWeight = 50
+	sliceIOWeight  = 50
+)
+
+// controllers are the ones crate.slice must have: cpu for its weight, memory for its line, and io, without which the
+// kernel does not keep its writers' unwritten data to the line.
+var controllers = []string{"cpu", "io", "memory"}
 
 func (m *ceiling) Place(kind, system string) (Placement, error) {
 	if err := CheckKind(kind); err != nil {
@@ -28,12 +44,80 @@ func (m *ceiling) Place(kind, system string) (Placement, error) {
 	if err := startSlice(leaf); err != nil {
 		return "", err
 	}
+	m.shaped.Do(func() { m.shape = m.bound() })
+	if m.shape != nil {
+		return "", m.shape
+	}
 	kindSlice := m.slice + "-" + kind + ".slice"
 	if err := systemd("systemctl --user set-property", "systemctl", "--user", "set-property", "--runtime",
 		kindSlice, "CPUWeight="+strconv.Itoa(cpuWeight(kind))); err != nil {
 		return "", fmt.Errorf("the %s kind's slice %s: CPUWeight: %w", kind, kindSlice, err)
 	}
 	return Placement(leaf), nil
+}
+
+// bound draws crate's line under all its work: crate.slice's MemoryHigh, the machine file's line of the machine's
+// memory, and its weights. MemoryHigh slows crate's own work past the line and kills nothing, and it holds crate's
+// unwritten data to a share of it, so a flush of crate's writes stays small. The properties are --runtime: they live
+// with the user's manager, and the next Place sets them again after it restarts. A slice that lacks a controller is
+// an error that names it, so crate never runs unbounded without saying so.
+func (m *ceiling) bound() error {
+	total, err := memTotal()
+	if err != nil {
+		return err
+	}
+	unit := m.slice + ".slice"
+	if err := systemd("systemctl --user set-property", "systemctl", "--user", "set-property", "--runtime", unit,
+		"MemoryHigh="+strconv.FormatUint(m.cfg.Line.Of(total), 10),
+		"CPUWeight="+strconv.Itoa(sliceCPUWeight), "IOWeight="+strconv.Itoa(sliceIOWeight)); err != nil {
+		return fmt.Errorf("crate's slice %s: its line and weights: %w", unit, err)
+	}
+	out, err := runTool("systemctl --user show", limit.Systemd(), managerEnv(),
+		"systemctl", "--user", "show", "--property=ControlGroup", "--value", unit)
+	if err != nil {
+		return fmt.Errorf("crate's slice %s: %w", unit, err)
+	}
+	group := strings.TrimSpace(out)
+	data, err := os.ReadFile(filepath.Join("/sys/fs/cgroup", group, "cgroup.controllers"))
+	if err != nil {
+		return fmt.Errorf("crate's slice %s: its controllers: %w", unit, err)
+	}
+	if missing := lacking(strings.Fields(string(data))); len(missing) > 0 {
+		return fmt.Errorf("crate's slice %s lacks the %s controller, so crate cannot bound its work: root delegates it "+
+			"to the user's manager (Delegate=cpu io memory pids in a drop-in for user@.service), effective when the manager restarts",
+			unit, strings.Join(missing, " and "))
+	}
+	return nil
+}
+
+// lacking is each of controllers that have does not hold.
+func lacking(have []string) []string {
+	var missing []string
+	for _, c := range controllers {
+		if !slices.Contains(have, c) {
+			missing = append(missing, c)
+		}
+	}
+	return missing
+}
+
+// memTotal is the machine's memory in bytes, from /proc/meminfo.
+func memTotal() (uint64, error) {
+	data, err := os.ReadFile("/proc/meminfo")
+	if err != nil {
+		return 0, fmt.Errorf("the machine's memory: %w", err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(line, "MemTotal:"); ok {
+			fields := strings.Fields(rest)
+			if len(fields) == 2 && fields[1] == "kB" {
+				if kb, err := strconv.ParseUint(fields[0], 10, 64); err == nil && kb > 0 {
+					return kb * 1024, nil
+				}
+			}
+		}
+	}
+	return 0, fmt.Errorf("the machine's memory: /proc/meminfo has no MemTotal in kB")
 }
 
 // Unplace stops the system's leaf slice. A leaf that is not there is already gone.
@@ -89,7 +173,8 @@ func startSlice(leaf string) error {
 	}
 	msg := strings.ToLower(err.Error())
 	if strings.Contains(msg, "not found") || strings.Contains(msg, "not loaded") {
-		return systemd("systemd-run --user", "systemd-run", "--user", "--scope", "--slice="+leaf, "true")
+		prog, args, _ := Placement(leaf).Command("true")
+		return systemd("systemd-run --user", append([]string{prog}, args...)...)
 	}
 	return err
 }

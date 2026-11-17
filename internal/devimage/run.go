@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/matta-kelly/crate/internal/limit"
+	"github.com/matta-kelly/crate/internal/machine"
 )
 
 // call is one ask of an outside program. It has a limit: passing it stops the call and says what it waited for.
@@ -19,14 +20,17 @@ type call struct {
 	dir   string
 	prog  string
 	args  []string
-	stdin io.Reader // nil for none
+	stdin io.Reader         // nil for none
+	in    machine.Placement // the slice it runs in, so what it writes is the slice's; "" for the caller's own
 }
 
 // run runs the call and ends its whole process group at the limit. The error holds the step's name.
 func run(c call, stdout, stderr io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), c.limit)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, c.prog, c.args...)
+	prog, args, env := c.in.Command(c.prog, c.args...)
+	cmd := exec.CommandContext(ctx, prog, args...)
+	cmd.Env = env
 	cmd.Dir = c.dir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = c.stdin, stdout, stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

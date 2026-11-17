@@ -59,7 +59,8 @@ type System struct {
 	bound  bool
 	image  string
 	played []Service
-	remote func() bool // whether podman is a client of a remote engine; engineRemote when nil
+	placed machine.Placement // the system's slice, from its last place; "" before it or on a machine that places nothing
+	remote func() bool       // whether podman is a client of a remote engine; engineRemote when nil
 }
 
 // New makes a system on m. It starts nothing.
@@ -116,7 +117,7 @@ func (s *System) Image() error {
 		return nil
 	}
 	step := s.spec.Record.Step(record.Image)
-	placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
+	placement, err := s.place()
 	if err != nil {
 		step.End(err, "")
 		return err
@@ -383,6 +384,7 @@ func (s *System) remove(keep []string, release bool) error {
 	if err := s.m.Unplace(s.spec.Kind, s.spec.Name); err != nil {
 		return fmt.Errorf("down: the slice of %s is still there: %w", s.spec.Name, err)
 	}
+	s.placed = ""
 
 	if release && s.slot != nil {
 		s.slot.Release()
@@ -407,7 +409,7 @@ func (s *System) play(ctx context.Context, services []Service, remake bool) erro
 				return err
 			}
 		}
-		placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
+		placement, err := s.place()
 		if err != nil {
 			return err
 		}
@@ -477,7 +479,7 @@ func (s *System) tools(ctx context.Context, decl declaration.Declaration, folder
 		if running {
 			return false, nil
 		}
-		placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
+		placement, err := s.place()
 		if err != nil {
 			return false, err
 		}
@@ -488,7 +490,7 @@ func (s *System) tools(ctx context.Context, decl declaration.Declaration, folder
 		return false, nil
 	}
 
-	placement, err := s.m.Place(s.spec.Kind, s.spec.Name)
+	placement, err := s.place()
 	if err != nil {
 		return false, err
 	}

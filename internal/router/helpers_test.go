@@ -91,6 +91,9 @@ func newRig(t *testing.T) *rig {
 	t.Setenv("WORKSPACE_ROUTER", r.name)
 	t.Setenv("WORKSPACE_ROUTER_PORT", strconv.Itoa(r.port))
 	t.Setenv("WORKSPACE_ROUTER_STATE", r.state)
+	// The machine of no file, under this run's own slice, so the host's machine file and slice are not the test's.
+	t.Setenv("CRATE_MACHINE", filepath.Join(r.state, "no-machine.toml"))
+	t.Setenv("CRATE_SLICE", fmt.Sprintf("crate-router-test-%d", os.Getpid()))
 	podman(t, "network", "create", r.network)
 	t.Cleanup(func() {
 		exec.Command(realPodman, "rm", "-f", "-t", "0", r.name).Run()

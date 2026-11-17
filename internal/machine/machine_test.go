@@ -1,7 +1,7 @@
 package machine_test
 
-// The machine file: [count] is what crate reads, and cpus and memory from the old form are read and dropped.
-// A kind outside the four is refused.
+// The machine file: crate's keys alone, [count] and [slice] memory. A key it does not know, the old cpus and memory
+// among them, is refused. A kind outside the four is refused.
 
 import (
 	"os"
@@ -22,29 +22,72 @@ func write(t *testing.T, body string) string {
 	return path
 }
 
-// The counts come from [count], whether or not the file still holds the old cpus and memory.
-func TestTheMachineFileReadsTheCountsAndDropsTheRest(t *testing.T) {
+// The counts come from [count], and the line from [slice] memory, else a quarter of the machine's memory.
+func TestTheMachineFileReadsTheCountsAndTheLine(t *testing.T) {
+	counts := "[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"
 	rows := []struct {
 		name string
 		body string
+		line machine.Line
 	}{
-		{"counts alone", "[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"},
-		{"counts beside a cpus and memory of the old form",
-			"cpus = \"2-15\"\nmemory = \"24G\"\n\n[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"},
-		{"counts beside a cpus and memory the old form refused",
-			"cpus = \"all\"\nmemory = \"lots\"\n\n[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"},
+		{"counts alone", counts, machine.Line{Percent: 25}},
+		{"a share", counts + "\n[slice]\nmemory = \"40%\"\n", machine.Line{Percent: 40}},
+		{"a size", counts + "\n[slice]\nmemory = \"8G\"\n", machine.Line{Bytes: 8 << 30}},
 	}
-	want := machine.Config{Count: machine.Count{Check: 2, Postsubmit: 1, Attempt: 4}}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
 			got, err := machine.Read(write(t, row.body))
 			if err != nil || got == nil {
 				t.Fatalf("expected the file, got %v, %v", got, err)
 			}
+			want := machine.Config{Count: machine.Count{Check: 2, Postsubmit: 1, Attempt: 4}, Line: row.line}
 			if !reflect.DeepEqual(*got, want) {
 				t.Errorf("expected %+v, got %+v", want, *got)
 			}
 		})
+	}
+}
+
+// A key crate does not know is refused with its name: the old cpus and memory, and a line that cannot be one.
+func TestTheMachineFileRefusesAKeyOrALineItCannotUse(t *testing.T) {
+	counts := "[count]\ncheck = 1\npostsubmit = 1\nattempt = 1\n"
+	rows := []struct {
+		name, body, holds string
+	}{
+		{"the old cpus", "cpus = \"2-15\"\n" + counts, "cpus"},
+		{"the old memory", "memory = \"24G\"\n" + counts, "memory"},
+		{"a slice key crate does not know", counts + "[slice]\ncpus = \"2\"\n", "slice.cpus"},
+		{"a share of 0", counts + "[slice]\nmemory = \"0%\"\n", "0%"},
+		{"a share past 100", counts + "[slice]\nmemory = \"150%\"\n", "150%"},
+		{"a size with no unit", counts + "[slice]\nmemory = \"8\"\n", `"8"`},
+		{"a size of 0", counts + "[slice]\nmemory = \"0G\"\n", "0G"},
+		{"a word", counts + "[slice]\nmemory = \"lots\"\n", "lots"},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			_, err := machine.Read(write(t, row.body))
+			if err == nil || !strings.Contains(err.Error(), row.holds) {
+				t.Errorf("expected an error that holds %q, got %v", row.holds, err)
+			}
+		})
+	}
+}
+
+// A line is its size, or its share of the machine's memory.
+func TestALineIsItsSizeOrItsShareOfTheMemory(t *testing.T) {
+	const total = 32 << 30
+	for _, row := range []struct {
+		line machine.Line
+		want uint64
+	}{
+		{machine.Line{Percent: 25}, 8 << 30},
+		{machine.Line{Percent: 100}, total},
+		{machine.Line{Bytes: 3 << 30}, 3 << 30},
+		{machine.DefaultLine, 8 << 30},
+	} {
+		if got := row.line.Of(total); got != row.want {
+			t.Errorf("%+v of 32G: expected %d, got %d", row.line, row.want, got)
+		}
 	}
 }
 
@@ -114,7 +157,7 @@ func TestAKindOutsideTheFourIsAnError(t *testing.T) {
 	}
 }
 
-// The window of a kind is its count in the machine file, and 1 with no file.
+// The window of a kind is its count in the machine file, and the defaults' 1 with no file.
 func TestTheWindowIsTheKindsCount(t *testing.T) {
 	t.Setenv("CRATE_MACHINE", write(t, "[count]\ncheck = 3\npostsubmit = 1\nattempt = 2\n"))
 	if got := machine.Window(machine.Check); got != 3 {

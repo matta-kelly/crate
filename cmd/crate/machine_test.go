@@ -1,6 +1,6 @@
 package main_test
 
-// The binary's part of the machine: a remote engine and a machine with no file are said on stderr, once.
+// The binary's part of the machine: a remote engine is said on stderr, once, and reaches no part of the user's manager.
 
 import (
 	"os"
@@ -15,7 +15,7 @@ func TestARemoteEngineSaysOnceThatItPlacesNothing(t *testing.T) {
 	stopUserSlices(t, slice)
 	file := filepath.Join(f.dir, "machine.toml")
 	must(t, os.WriteFile(file, []byte("[count]\ncheck = 1\npostsubmit = 1\nattempt = 1\n"), 0o644))
-	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice, "CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock"}, "ensure")
+	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice, "CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock", f.stubPATH()}, "ensure")
 	if r.code != 0 {
 		t.Fatalf("ensure with CONTAINER_HOST and a machine file: expected exit 0, got %s", r)
 	}
