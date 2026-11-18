@@ -34,8 +34,38 @@ func initVerb(args []string) error {
 	return initRepo(args[0], github, os.Stdout, true)
 }
 
-// installRoot is the folder that holds this binary's bin/ and hooks/.
+// installRoot is the folder that holds this binary's bin/ and hooks/, by the path crate was run by: the first path on
+// the way from it to the binary itself, link by link, whose folder is bin/ beside a hooks/. So through a link to the
+// install, a machine's /usr/local/lib/crate/current, it stays that link, and a repo's hooks follow the install to each
+// new version; through a link to the binary alone, ~/.local/bin/crate, it is the install the link names. With no
+// such path, it is the binary's own folder's.
 func installRoot() (string, error) {
+	path := os.Args[0]
+	if !strings.Contains(path, "/") {
+		if found, err := exec.LookPath(path); err == nil {
+			path = found
+		}
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	for range 40 {
+		root := filepath.Dir(filepath.Dir(path))
+		if filepath.Base(filepath.Dir(path)) == "bin" {
+			if info, err := os.Stat(filepath.Join(root, "hooks")); err == nil && info.IsDir() {
+				return root, nil
+			}
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			break
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
+	}
 	self, err := os.Executable()
 	if err != nil {
 		return "", err

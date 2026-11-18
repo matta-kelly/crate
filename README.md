@@ -176,7 +176,8 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
   commits ask for one (Conventional Commits as semver; before 1.0.0 each bump moves down a place). The tag is the
   truth, and `ship` names how it publishes. A package's first version is tagged by hand in the bare repo:
   `git -C <bare> tag v<version> <commit>`
-- `crate init <bare> [<github url>]`: put the hooks on a bare repo. `crate apply <file|->`: make a server match its
+- `crate init <bare> [<github url>]`: put the hooks on a bare repo: the install's, by the path crate was run by, so
+  through a link to the install (`/usr/local/lib/crate/current`) the hooks follow it to each new version. `crate apply <file|->`: make a server match its
   declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`). A new repo's main is seeded from GitHub's. crate's own version is
   its install's
 

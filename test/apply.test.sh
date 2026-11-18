@@ -33,6 +33,24 @@ if [ "$(git -C "$tmp/git/a.git" config core.hooksPath)" = "$root/hooks" ] && [ "
   ok "each repo gets a bare repo with crate's hooks"
 else not_ok "each repo gets a bare repo with crate's hooks" "$out"; fi
 
+# A machine's install is a version folder behind a link (/usr/local/lib/crate/current): the hooks are the link's, so
+# they follow the install to its next version. A link to the binary alone (~/.local/bin/crate) is the install it names.
+mkdir -p "$tmp/lib/crate" "$tmp/bin"
+cp -r "$root" "$tmp/lib/crate/v1"
+ln -s v1 "$tmp/lib/crate/current"
+ln -s "$tmp/lib/crate/v1/bin/crate" "$tmp/bin/crate"
+"$tmp/lib/crate/current/bin/crate" apply - <<<"GIT_HOME=$tmp/linked
+GITHUB_BASE=$tmp/github
+REPOS=a" >/dev/null 2>&1
+PATH="$tmp/bin:$PATH" crate apply - <<<"GIT_HOME=$tmp/bylink
+GITHUB_BASE=$tmp/github
+REPOS=a" >/dev/null 2>&1
+if [ "$(git -C "$tmp/linked/a.git" config core.hooksPath)" = "$tmp/lib/crate/current/hooks" ] &&
+  [ "$(git -C "$tmp/bylink/a.git" config core.hooksPath)" = "$tmp/lib/crate/v1/hooks" ]; then
+  ok "the hooks are the install's by the path crate was run by: a link to the install stays the link"
+else not_ok "the hooks are the install's by the path crate was run by: a link to the install stays the link" \
+  "linked: $(git -C "$tmp/linked/a.git" config core.hooksPath), by a link to the binary: $(git -C "$tmp/bylink/a.git" config core.hooksPath)"; fi
+
 if [ "$(git -C "$tmp/git/a.git" rev-parse main)" = "$(cat "$tmp/a.sha")" ] && grep -q "a seeded" <<<"$out"; then
   ok "a new repo's main is seeded from GitHub's"
 else not_ok "a new repo's main is seeded from GitHub's" "$out"; fi
