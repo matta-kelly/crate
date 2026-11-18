@@ -229,6 +229,10 @@ crate stays outside the queue it ships, so a broken hook never blocks its own fi
 podman against the built install (`just build`, in `dist/crate`).
 
 - `just release <major.minor.patch>`: check, tag, move the major tag (`v3`), and put `crate-linux-amd64.tar.gz`
-  (`bin/crate`, `hooks/`, `VERSION`, `COMMIT`) on the release. A machine runs crate at the major tag
+  (`bin/crate`, `hooks/`, `VERSION`, `COMMIT`) on the release. The release reaches each machine:
+  - the laptop and GitHub's workflows: at the major tag. chezmoi takes it within a day, or at once with
+    `chezmoi apply --refresh-externals`
+  - monkeybusiness: at the version and sha256 that dazoo's `nodes/mutable/monkeybusiness/releases` pins. Each release
+    lands its line there the same day, and dazoo-sync moves `/usr/local/lib/crate/current` on its next tick
 - `just rollback <major.minor.patch>`: move the major tag back
 - every call has a limit, in `internal/limit`. `CRATE_LIMIT_SCALE` divides them all, never below 1 s, for tests
