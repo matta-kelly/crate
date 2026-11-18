@@ -106,6 +106,9 @@ crate does not run.
 - the machine file: `/etc/crate/machine.toml` (`CRATE_MACHINE`) holds crate's keys alone, `[count]` and
   `[slice] memory` (a share, `"25%"`, or a size, `"8G"`), and a key crate does not know is an error. No file is the
   defaults: a count of 1 for each kind, and a quarter of the memory
+- crate's own lasting processes: a queue worker or a postsubmit, detached from the push or the unit that starts it,
+  runs in a scope of crate's slice, so the end of a oneshot unit (a timer's `crate apply`) does not stop it. The scope
+  is proven first: a user manager that does not answer fails the start, and the error says so
 - a remote engine (`CONTAINER_HOST`): its work runs on the engine's machine, so crate places nothing, holds nothing,
   and says so once
 

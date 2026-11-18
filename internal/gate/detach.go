@@ -1,10 +1,14 @@
 package gate
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"syscall"
+
+	"github.com/matta-kelly/crate/internal/machine"
 )
 
 // StartWorker starts the repo's worker, crate queue run <bare>, when changes wait and none runs. Its output goes to
@@ -29,8 +33,9 @@ func (r *Repo) startPostsubmit() error {
 	return r.detach("postsubmit/run.log", "postsubmit", r.Bare)
 }
 
-// detach starts crate with args in its own session, with no tie to the hook that starts it, so a push does not wait
-// for it and a closed connection does not stop it. Its output is appended to the state file log.
+// detach starts crate with args in its own session and its own scope (machine.Own), with no tie to the hook or unit
+// that starts it, so a push does not wait for it, and neither a closed connection nor the end of a oneshot unit stops
+// it. Its output is appended to the state file log.
 func (r *Repo) detach(log string, args ...string) error {
 	self, err := os.Executable()
 	if err != nil {
@@ -50,7 +55,23 @@ func (r *Repo) detach(log string, args ...string) error {
 			}
 		}
 	}
-	cmd := exec.Command(self, args...)
+	// In a scope of crate's own slice, so a oneshot unit that started it (a timer's crate apply) does not take it down
+	// when the unit ends, and it is under crate's line. The scope is proven first, with a call that waits: a detached
+	// child that fails cannot say so, so a manager that does not answer fails here, loud, and never falls back to a
+	// child the unit's end would kill.
+	own := machine.Own()
+	if own != "" {
+		prog, argv, env := own.Command("true")
+		probe := exec.Command(prog, argv...)
+		probe.Env = env
+		if out, err := probe.CombinedOutput(); err != nil {
+			return fmt.Errorf("crate's own slice %s: the user's manager did not make a scope (it is found at $XDG_RUNTIME_DIR/bus): %s: %w",
+				own, strings.TrimSpace(string(out)), err)
+		}
+	}
+	prog, argv, env := own.Command(self, args...)
+	cmd := exec.Command(prog, argv...)
+	cmd.Env = env
 	cmd.Dir = r.Bare
 	cmd.Stdout, cmd.Stderr = f, f
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

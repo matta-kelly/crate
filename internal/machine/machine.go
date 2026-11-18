@@ -114,9 +114,23 @@ func Default() Machine {
 	if cfg == nil {
 		cfg = Defaults()
 	}
-	slice := os.Getenv("CRATE_SLICE")
-	if slice == "" {
-		slice = "crate"
+	return &ceiling{cfg: cfg, slice: sliceName()}
+}
+
+// sliceName is the machine's slice: CRATE_SLICE, or crate when the environment names none.
+func sliceName() string {
+	if slice := os.Getenv("CRATE_SLICE"); slice != "" {
+		return slice
 	}
-	return &ceiling{cfg: cfg, slice: slice}
+	return "crate"
+}
+
+// Own is where crate's own lasting processes run, a queue worker or a postsubmit detached from what started it:
+// crate's slice itself, under its line, so neither outlives nor dies with the unit or session that started it. ""
+// behind a remote engine, whose machine is not this one.
+func Own() Placement {
+	if os.Getenv("CONTAINER_HOST") != "" {
+		return ""
+	}
+	return Placement(sliceName() + ".slice")
 }

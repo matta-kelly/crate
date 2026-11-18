@@ -45,6 +45,12 @@ echo a >a && git add a && git commit -qm "feat: a"
 github_before=$(main_of "$tmp/github.git")
 out=$(land)
 github_during=$(main_of "$tmp/github.git")
+# the detached postsubmit runs in a scope of crate's own slice, not in the cgroup of what started it
+pid=$(pgrep -f -n -- "postsubmit $tmp/repo.git" || true)
+cgroup=$( [ -n "$pid" ] && cat "/proc/$pid/cgroup" 2>/dev/null)
+if grep -q "/${CRATE_SLICE:-crate}.slice/run-" <<<"$cgroup"; then
+  ok "postsubmit runs in a scope of crate's own slice"
+else not_ok "postsubmit runs in a scope of crate's own slice" "pid=$pid cgroup=$cgroup"; fi
 if grep -q "postsubmit runs .* in the background; GitHub gets main when it passes" <<<"$out" &&
   ! git -C "$tmp/repo.git" rev-parse -q --verify v0.1.1 >/dev/null; then
   ok "a land does not wait for postsubmit, says when github gets main, and is not released before it passes"

@@ -168,3 +168,21 @@ func TestTheWindowIsTheKindsCount(t *testing.T) {
 		t.Errorf("no file: expected 1, got %d", got)
 	}
 }
+
+// crate's own lasting processes run in crate's slice itself, CRATE_SLICE's or crate's, and behind a remote engine in
+// no slice of this machine.
+func TestCratesOwnProcessesRunInItsSlice(t *testing.T) {
+	t.Setenv("CONTAINER_HOST", "")
+	t.Setenv("CRATE_SLICE", "")
+	if got := machine.Own(); got != "crate.slice" {
+		t.Errorf("with no CRATE_SLICE: expected crate.slice, got %q", got)
+	}
+	t.Setenv("CRATE_SLICE", "crate-test")
+	if got := machine.Own(); got != "crate-test.slice" {
+		t.Errorf("with CRATE_SLICE=crate-test: expected crate-test.slice, got %q", got)
+	}
+	t.Setenv("CONTAINER_HOST", "unix:///run/podman/podman.sock")
+	if got := machine.Own(); got != "" {
+		t.Errorf("behind a remote engine: expected none, got %q", got)
+	}
+}
