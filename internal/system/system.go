@@ -394,17 +394,15 @@ func (s *System) remove(keep []string, release bool) error {
 	return nil
 }
 
-// play makes each service a pod of its own, unless it is there and remake is false.
+// play makes each service a pod of its own. One that is there is started, with its data, unless remake is true:
+// then it is made again.
 func (s *System) play(ctx context.Context, services []Service, remake bool) error {
 	for _, service := range services {
 		made, err := s.podExists(ctx, service.Name)
 		if err != nil {
 			return err
 		}
-		if made {
-			if !remake {
-				continue
-			}
+		if made && remake {
 			if _, err := s.call(ctx, "pod", "rm", "-f", service.Name); err != nil {
 				return err
 			}
@@ -413,7 +411,12 @@ func (s *System) play(ctx context.Context, services []Service, remake bool) erro
 		if err != nil {
 			return err
 		}
-		if err := s.playOne(ctx, service, placement); err != nil {
+		if made && !remake {
+			err = s.startPod(ctx, service.Name, placement)
+		} else {
+			err = s.playOne(ctx, service, placement)
+		}
+		if err != nil {
 			return err
 		}
 	}

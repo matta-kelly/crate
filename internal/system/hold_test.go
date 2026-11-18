@@ -60,8 +60,8 @@ func (m *lateMachine) Unplace(kind, system string) error { return nil }
 
 type lateSlot struct{ m *lateMachine }
 
-func (lateSlot) Bind()            {}
-func (s lateSlot) Release()       { s.m.released.Add(1) }
+func (lateSlot) Bind()      {}
+func (s lateSlot) Release() { s.m.released.Add(1) }
 
 // The wait is bounded by limit.Hold: past it Hold returns, holds nothing, makes nothing, and a slot that
 // arrives late is released.

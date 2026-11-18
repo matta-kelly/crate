@@ -236,6 +236,17 @@ func (s *System) playOne(ctx context.Context, service Service, placement machine
 	return err
 }
 
+// startPod starts a pod that is there, in the same placement playOne makes one in. A running pod stays as it is.
+func (s *System) startPod(ctx context.Context, name string, placement machine.Placement) error {
+	if placement == "" {
+		_, err := s.call(ctx, "pod", "start", name)
+		return err
+	}
+	prog, argv, env := placement.Command("podman", "pod", "start", name)
+	_, err := s.run(ctx, prog, env, argv...)
+	return err
+}
+
 // terminal says f is a terminal, so a command run in a member gets one.
 func terminal(f *os.File) bool {
 	info, err := f.Stat()

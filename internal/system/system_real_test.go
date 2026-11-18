@@ -616,8 +616,8 @@ func TestLogsShowsEachMembersOutput(t *testing.T) {
 
 // --- down and up twice ---
 
-// Up twice changes nothing, and a stopped member is started again. Down leaves no container, pod, volume or
-// network, and a second down changes nothing.
+// Up twice changes nothing, and a stopped member, or stopped services, start again with their data. Down leaves no
+// container, pod, volume or network, and a second down changes nothing.
 func TestUpTwiceChangesNothingAndDownLeavesNothing(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t, worldOpts{Kind: system.Work, Services: true})
@@ -643,6 +643,17 @@ func TestUpTwiceChangesNothingAndDownLeavesNothing(t *testing.T) {
 	}
 	if got := w.podmanOK("inspect", w.name+"-tools", "--format", "{{.State.Running}}"); got != "true" {
 		t.Errorf("a stopped member: expected it running again, got %q", got)
+	}
+
+	w.podmanOK("pod", "stop", "-t", "0", w.name+"-postgres")
+	if err := w.sys.Up(ctx); err != nil {
+		t.Fatalf("Up after stopped services: %v", err)
+	}
+	if got := w.podmanOK("pod", "inspect", w.name+"-postgres", "--format", "{{.Id}}"); got != firstPod {
+		t.Errorf("stopped services: expected the same pod %s, with its data, got %s", firstPod, got)
+	}
+	if got := w.mustRun("wget", "-qO-", "http://postgres:5432/"); !strings.Contains(got, "ok") {
+		t.Errorf("stopped services: expected postgres running again, got %q", got)
 	}
 
 	if err := w.sys.Remove(nil); err != nil {
