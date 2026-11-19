@@ -312,6 +312,35 @@ func TestRunPassesEveryWordAsArgv(t *testing.T) {
 	}
 }
 
+// crate run gives the command its stdin, as a pipe and not only a terminal, and keeps its stderr apart from its stdout,
+// so a program can drive the tools member: write a file from stdin, read a listing from stdout.
+func TestRunGivesTheCommandItsStdinAndKeepsStderrApart(t *testing.T) {
+	t.Parallel()
+	w := newWs(t, "")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, crateBin, "-C", w.root, "run", "sh", "-c", `cat > from-stdin; echo out; echo err >&2`)
+	cmd.Env = append(filterEnv(os.Environ(), "CRATE_MACHINE", "CRATE_SLICE", "CONTAINER_HOST", "CRATE_LIMIT_SCALE"),
+		"CRATE_MACHINE="+filepath.Join(w.dir, "no-machine.toml"),
+		"CRATE_SLICE="+w.slice,
+		"XDG_STATE_HOME="+filepath.Join(w.dir, "state"))
+	cmd.Stdin = strings.NewReader("given on stdin\n")
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("crate run: %v: %s", err, errb.String())
+	}
+	if got, err := os.ReadFile(filepath.Join(w.root, "from-stdin")); err != nil || string(got) != "given on stdin\n" {
+		t.Errorf("run's stdin: expected the file to hold what was given, got %q, %v", got, err)
+	}
+	if strings.TrimSpace(out.String()) != "out" {
+		t.Errorf("run's stdout: expected only out, got %q", out.String())
+	}
+	if !strings.Contains(errb.String(), "err") || strings.Contains(out.String(), "err") {
+		t.Errorf("run's stderr: expected err there and not in stdout, got stdout %q, stderr %q", out.String(), errb.String())
+	}
+}
+
 // run -e NAME gives the tools member the host's NAME, its value never in argv; a NAME the host has not set is refused,
 // named, and runs nothing.
 func TestRunPassesTheHostsEnvByName(t *testing.T) {

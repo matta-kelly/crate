@@ -59,7 +59,7 @@ func runVerb(args []string) error {
 			return err
 		}
 	}
-	code, err := s.Run(context.Background(), args, env, os.Stdout)
+	code, err := s.Run(context.Background(), args, env, os.Stdin, os.Stdout, os.Stderr)
 	if err != nil {
 		return err
 	}

@@ -133,7 +133,7 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 		return ErrRefused
 	}
 	step := rec.Step(record.Check)
-	code, err := s.Run(ctx, append([]string{"scripts/check.sh"}, args...), nil, out)
+	code, err := s.Run(ctx, append([]string{"scripts/check.sh"}, args...), nil, nil, out, out)
 	switch {
 	case ctx.Err() != nil:
 		step.End(ctx.Err(), "stopped")

@@ -239,14 +239,19 @@ func (s *System) network(ctx context.Context) error {
 }
 
 // Run runs argv in the tools member, with each of env, a name, given the caller's value of it (podman exec -e NAME).
-func (s *System) Run(ctx context.Context, argv, env []string, out io.Writer) (int, error) {
+// A stdin that is not nil is the command's (podman exec -i), and a terminal one is its terminal too (-t). Its output
+// goes to stdout and stderr, kept apart.
+func (s *System) Run(ctx context.Context, argv, env []string, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
 	dir := s.spec.Checkout
 	if wd, err := os.Getwd(); err == nil && within(s.spec.Checkout, wd) {
 		dir = wd
 	}
 	args := []string{"exec", "--workdir", dir}
-	if terminal(os.Stdin) {
-		args = append(args, "-it")
+	if stdin != nil {
+		args = append(args, "-i")
+		if f, ok := stdin.(*os.File); ok && terminal(f) {
+			args = append(args, "-t")
+		}
 	}
 	for _, name := range env {
 		args = append(args, "-e", name)
@@ -254,10 +259,7 @@ func (s *System) Run(ctx context.Context, argv, env []string, out io.Writer) (in
 	args = append(args, s.spec.Name+"-tools")
 	args = append(args, argv...)
 	cmd := command(ctx, "podman", nil, args...)
-	cmd.Stdout, cmd.Stderr = out, out
-	if terminal(os.Stdin) {
-		cmd.Stdin = os.Stdin
-	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
 	err := cmd.Run()
 	if ctx.Err() != nil {
 		return 1, fmt.Errorf("run: stopped when its context ended: %w", ctx.Err())

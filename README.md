@@ -23,7 +23,9 @@ through a merge queue.
   does, and counts as given for `[app] needs`; the dev server is made again to take it. Each `up` is a run on the
   person's [record](#the-record)
 - `run [-e NAME]... [--] <argv...>`: run a command in the tools member, in the caller's folder. Its exit is the
-  command's. Each `-e NAME` passes this shell's `NAME` by name, so a secret's value is never in argv
+  command's, its stdin is the caller's (a pipe as well as a terminal), and its stdout and stderr stay apart, so a
+  program can drive the tools member. Each `-e NAME` passes this shell's `NAME` by name, so a secret's value is never
+  in argv
 - `url`: the workspace's URLs, one per line
 - `logs [tools|app|<service>]`: a member's output
 - `services`: play the services again

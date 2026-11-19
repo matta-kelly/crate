@@ -245,7 +245,7 @@ func (w *world) run(argv ...string) result {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	var out bytes.Buffer
-	code, err := w.sys.Run(ctx, argv, nil, &out)
+	code, err := w.sys.Run(ctx, argv, nil, nil, &out, &out)
 	return result{out: out.String(), code: code, err: err}
 }
 
@@ -581,7 +581,7 @@ func TestRunRunsTheArgvUntouched(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	var out bytes.Buffer
-	if code, err := w.sys.Run(ctx, []string{"sh", "-c", "sleep 60"}, nil, &out); err == nil || code == 0 {
+	if code, err := w.sys.Run(ctx, []string{"sh", "-c", "sleep 60"}, nil, nil, &out, &out); err == nil || code == 0 {
 		t.Errorf("a command past its ctx: expected an error and no clean exit, got exit %d, error %v", code, err)
 	}
 }
