@@ -2,6 +2,7 @@ package devimage
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"strings"
 
@@ -26,9 +27,12 @@ func Of(o Options) (image, hash string, err error) {
 
 // Held is the hash of each of image's tags this machine's store holds.
 func Held(image string) ([]string, error) {
-	var out bytes.Buffer
+	var out, errb bytes.Buffer
 	if err := run(call{name: "podman images", limit: limit.Podman(), prog: "podman",
-		args: []string{"images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=" + image}}, &out, io.Discard); err != nil {
+		args: []string{"images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=" + image}}, &out, &errb); err != nil {
+		if msg := strings.TrimSpace(errb.String()); msg != "" {
+			return nil, fmt.Errorf("%w: %s", err, msg)
+		}
 		return nil, err
 	}
 	var hashes []string

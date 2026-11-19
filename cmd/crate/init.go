@@ -198,7 +198,7 @@ func applyVerb(args []string) error {
 					failed = true
 				}
 				if err := r.StartWorker(); err != nil {
-					fmt.Fprintf(os.Stderr, "crate: %s: its worker did not start: %v\n", repo, err)
+					fmt.Fprintf(os.Stderr, "crate: %s: %v\n", repo, err)
 					failed = true
 				}
 			}

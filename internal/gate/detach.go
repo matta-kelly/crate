@@ -16,7 +16,18 @@ import (
 // worker.log. It also starts the publish of a green main not yet published (StartShip) and the dev image cache's
 // pending work (StartCache), after the worker, so neither, when it cannot start, ever holds the queue.
 func (r *Repo) StartWorker() error {
-	return errors.Join(r.startWorker(), r.StartShip(), r.StartCache())
+	var ship, cache error
+	if err := r.StartShip(); err != nil {
+		ship = fmt.Errorf("the publish did not start: %w", err)
+	}
+	if err := r.StartCache(); err != nil {
+		cache = fmt.Errorf("the dev image cache did not start: %w", err)
+	}
+	var worker error
+	if err := r.startWorker(); err != nil {
+		worker = fmt.Errorf("its worker did not start: %w", err)
+	}
+	return errors.Join(worker, ship, cache)
 }
 
 func (r *Repo) startWorker() error {

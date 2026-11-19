@@ -86,3 +86,12 @@ func TestHeldKeepsARegistrysPort(t *testing.T) {
 		t.Errorf("expected [0123456789abcdef], got %v, %v", got, err)
 	}
 }
+
+// A store that cannot be listed is an error that carries podman's own message, so its cause is read, not guessed.
+func TestHeldFailsWithPodmansMessage(t *testing.T) {
+	_, _ = given(t)
+	t.Setenv("IMAGES_ERR", "Error: cannot open the store")
+	if _, err := devimage.Held("ghcr.io/o/x-dev"); err == nil || !strings.Contains(err.Error(), "cannot open the store") {
+		t.Errorf("expected an error with podman's message, got %v", err)
+	}
+}

@@ -20,7 +20,7 @@ case $1 in
 build) tag=; while [ $# -gt 0 ]; do [ "$1" = -t ] && tag=$2; shift; done; echo "$tag" >>"$T/local" ;;
 tag) echo "$3" >>"$T/local" ;;
 push) ref=${!#}; echo "$ref sha256:$(echo "$ref" | sha256sum | cut -c1-64)" >>"$T/registry" ;;
-images) cat "$T/local" ;;
+images) [ -z "$IMAGES_ERR" ] || { echo "$IMAGES_ERR" >&2; exit 125; }; cat "$T/local" ;;
 pull) [ -n "$PULLS" ] || exit 1; echo "$2" >>"$T/local" ;;
 image) case $2 in exists) grep -qxF -- "$3" "$T/local" ;; esac ;;
 esac
