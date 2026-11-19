@@ -80,7 +80,9 @@ func landVerb(args []string) error {
 }
 
 // queued says the server's queue holds the ref.
-func queued(ref string) bool { return gitRun(io.Discard, "ls-remote", "--exit-code", "server", ref) == nil }
+func queued(ref string) bool {
+	return gitRun(io.Discard, "ls-remote", "--exit-code", "server", ref) == nil
+}
 
 // fastForwardMain moves the repo's main checkout, its first worktree, to server/main when it has main checked out and
 // the move is a clean fast-forward. One with its own commits, or an uncommitted change in the same files, stays.

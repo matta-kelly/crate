@@ -177,7 +177,9 @@ func (f *fx) buildSlice() string { return f.slice + "-work-build.slice" }
 
 // stubPATH is the stand-ins alone first, systemd's forbidden among them: for a remote engine, which must not reach the
 // user's manager.
-func (f *fx) stubPATH() string { return "PATH=" + f.bin + string(os.PathListSeparator) + os.Getenv("PATH") }
+func (f *fx) stubPATH() string {
+	return "PATH=" + f.bin + string(os.PathListSeparator) + os.Getenv("PATH")
+}
 
 // realSystemdPATH is the real systemctl and systemd-run before the fixture's stand-ins, so a test of the
 // binary's real placement keeps the stand-in podman and skopeo it needs for the build.
