@@ -95,6 +95,15 @@ func (r *Repo) Release(commit string, out io.Writer) {
 	if decl.Ship == "" {
 		return
 	}
+	// An image has no version: its tag is its commit, and it publishes from a process of its own (ship.go).
+	if decl.ShipsImage() {
+		if err := r.StartShip(); err != nil {
+			fmt.Fprintf(out, "crate: the image's publish did not start: %v; crate apply starts it again\n", err)
+			return
+		}
+		fmt.Fprintf(out, "crate: %s's image publishes in the background; its pin line goes to %s and the record\n", short(main), r.state("ship", "run.log"))
+		return
+	}
 	packages := strings.Fields(decl.Packages)
 	if len(packages) == 0 {
 		packages = []string{"."}

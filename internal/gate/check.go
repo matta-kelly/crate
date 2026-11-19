@@ -15,6 +15,7 @@ import (
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
 	"github.com/matta-kelly/crate/internal/record"
+	"github.com/matta-kelly/crate/internal/ship"
 	"github.com/matta-kelly/crate/internal/system"
 )
 
@@ -84,6 +85,12 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 	for _, folder := range folders {
 		keep = append(keep, member.VolumeName(name, folder))
 	}
+	source := ""
+	if decl.ShipsImage() {
+		if url, err := r.git("remote", "get-url", "github"); err == nil {
+			source = ship.Source(url)
+		}
+	}
 	s := system.New(machine.Default(), system.Spec{
 		Kind:     kind,
 		Name:     name,
@@ -94,6 +101,7 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 		Keep:     keep,
 		Out:      out,
 		Record:   rec,
+		Source:   source,
 	})
 	if err := s.Hold(); err != nil {
 		fmt.Fprintf(out, "crate: %v\n", err)
@@ -139,6 +147,18 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 		return ErrRefused
 	}
 	step.End(nil, "")
+	// A passed check of a repo that ships its image keeps the image it ran, by the commit it checked, until that main
+	// is green and published (ship.go).
+	if kind == system.Check && decl.ShipsImage() {
+		commit, err := work(dir, "rev-parse", "HEAD")
+		if err == nil {
+			err = s.KeepApp(ctx, r.kept(commit))
+		}
+		if err != nil {
+			fmt.Fprintf(out, "crate: the check passed, but its image is not kept to ship: %v\n", err)
+			return ErrRefused
+		}
+	}
 	return nil
 }
 

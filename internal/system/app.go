@@ -142,6 +142,9 @@ func (s *System) build(ctx context.Context, dockerfile string, placement machine
 	step := s.spec.Record.Step(record.Build)
 	defer func() { step.End(err, "") }()
 	build := []string{"build", "-f", filepath.Join(s.spec.Checkout, dockerfile), "-t", s.appName()}
+	if s.spec.Source != "" {
+		build = append(build, "--label", "org.opencontainers.image.source="+s.spec.Source)
+	}
 	if placement != "" {
 		build = append(build, "--cgroup-parent="+string(placement))
 	}
@@ -150,6 +153,15 @@ func (s *System) build(ctx context.Context, dockerfile string, placement machine
 	defer cancel()
 	if _, err := s.call(buildCtx, build...); err != nil {
 		return fmt.Errorf("app: the build of %s: %w", dockerfile, err)
+	}
+	return nil
+}
+
+// KeepApp tags the built app's image as ref, so it outlives the system: a check's image, kept to be shipped once its
+// commit's main is green. The system's own name for it goes with the system, as before.
+func (s *System) KeepApp(ctx context.Context, ref string) error {
+	if _, err := s.call(ctx, "tag", s.appName(), ref); err != nil {
+		return fmt.Errorf("app: the keep of the image as %s: %w", ref, err)
 	}
 	return nil
 }

@@ -80,7 +80,8 @@ inputs = [".crate/Containerfile", "pnpm-lock.yaml", "package.json"]
   attempt have no router
 - a built app needs at least one port. The dev image needs the tool `health` calls (`wget`) when the dev server runs it
 - the merge queue's keys: `crate`, `image`, `timeout`, `batch`, `ship`, `packages`, `postsubmit`, `postsubmit_timeout`
-  ([The merge queue](#the-merge-queue))
+  ([The merge queue](#the-merge-queue)); and, for `ship = "image"`, `[app] publish`, the repository the image ships to
+  (`ghcr.io/<owner>/<name>`, no tag), and `[app] quadlets`, the folder of its run files ([The ship](#the-ship))
 
 ## The machine
 
@@ -177,8 +178,9 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
   both
 - release: each green main tags a version of each of `packages` whose files changed since its last version and whose
   commits ask for one (Conventional Commits as semver; before 1.0.0 each bump moves down a place). The tag is the
-  truth, and `ship` names how it publishes. A package's first version is tagged by hand in the bare repo:
-  `git -C <bare> tag v<version> <commit>`
+  truth, and `ship` names how it publishes: `npm` and `source` from the tag, by the repo's own workflow on GitHub;
+  `image` by crate itself, with no version tag ([The ship](#the-ship)). A package's first version is tagged by hand in
+  the bare repo: `git -C <bare> tag v<version> <commit>`
 - `crate init <bare> [<github url>]`: put the hooks on a bare repo: the install's, by the path crate was run by, so
   through a link to the install (`/usr/local/lib/crate/current`) the hooks follow it to each new version. `crate apply <file|->`: make a server match its
   declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`). A new repo's main is seeded from GitHub's. crate's own version is
@@ -186,20 +188,49 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 
 `hooks/` holds two one-line scripts that run `crate hook <name>` from the install beside them. The queue's state lives
 beside each bare repo, in `<bare>/crate`: `queue.json`, each change's log in `queue/`, the runs' worktrees, the
-worker's log, postsubmit's, and the [record](#the-record).
+worker's log, postsubmit's, the ship's, and the [record](#the-record).
+
+## The ship
+
+`ship = "image"`: crate publishes each green main's app, the image its check built and ran, with its run files beside
+it, so a node runs what crate tested. Nothing on GitHub builds it again.
+
+- the keep: a check that passes keeps its app's image by the commit it checked, `localhost/crate-<repo>-ship:<commit>`,
+  past its slot's removal, so it is there when main is green, after postsubmit for a repo that has one. A repo that
+  does not ship its image keeps nothing
+- the publish: `crate ship <bare>`, started by each green main beside the copy to GitHub, in its own process, so an
+  upload never holds the queue. A land says it started; its output is in `<bare>/crate/ship/run.log`
+  - the image: pushed as `<publish>:sha-<short commit>`. No `latest`
+  - the run files: each file of `quadlets` at the commit, each `Image=` of a `.container` that ends in `:VERSION`
+    stamped with `:sha-<short commit>`. A `VERSION` left after is refused. They are packed as one tar.gz that is the
+    same bytes for the same files (sorted names, owner 0, time 0), and pushed with oras-go as an OCI artifact,
+    `<publish>-quadlets:sha-<short commit>`: its layer `quadlets.tar.gz` (`application/vnd.oci.image.layer.v1.tar+gzip`),
+    its artifact type `application/vnd.<name>.quadlets.v1`, its source the repo on GitHub, its created time the commit's
+  - the pin line, printed and on the record: `<name> sha-<short> <publish>-quadlets sha256:<manifest digest>`. A node's
+    releases file takes it (monkeydo fetches the manifest by that digest and saves the layer by its title)
+- the login: `$XDG_CONFIG_HOME/crate/push-auth.json` (`~/.config` when unset), podman's `auth.json` format, with a
+  token that may write the packages. Only the publish reads it; no check, postsubmit or workspace mounts it
+- the rule is a node's: the green main is published. A publish that fails (no login, a registry that is down) is
+  recorded, and main and the queue go on. It is tried again, with the same kept image, by the next green main, the
+  worker's next start and `crate apply`; a newer green main takes the place of one not yet published.
+  `<bare>/crate/ship/published` is the last commit published
+- the kept images that go: after each publish, every kept image but the green main's while it is not published, and
+  those of the mains after it, which wait for their turn. So what was published goes, and what never will be: a main
+  a newer one superseded, a run that passed and never landed. A green main with no kept image (one that landed before
+  its repo shipped its image) has nothing to publish; the next main that lands has
 
 ## The record
 
 crate's record of what it did and how long each part took: one JSON line per step of a run, appended as the step
 ends, and a total line when the run ends. A run is one thing crate does: a check, a change's land through the queue,
-a postsubmit, an `up`, a copy to GitHub (mirror) or a release.
+a postsubmit, an `up`, a copy to GitHub (mirror) or a release (a version, or an image's publish).
 
 - the files
   - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror and release of that repo
   - a person: `$XDG_STATE_HOME/crate/log.jsonl` (`~/.local/state` when unset), each `up` of that user
 - the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass` or `fail`),
   `note` (why it failed, or what: the image's `stored`, `pulled` or `built`, a check's changes, a land's main, a
-  version, the revert)
+  version, the revert, a publish's pin line)
 - the steps, in order; a step that does not run writes no line
   - `wait`: a change's time in the queue before a run took it (a land)
   - `image`: the dev image on this machine
@@ -210,6 +241,7 @@ a postsubmit, an `up`, a copy to GitHub (mirror) or a release.
   - `app`: started until healthy, and its routes
   - `check`: `scripts/check.sh`
   - `revert`: postsubmit's revert of a red main
+  - `push`, `run files`: a publish's image, and its run files beside it (a release of `ship = "image"`)
   - `total`: the run, its result the run's; a land's runs from entering the queue to its verdict
 - the summary: one line at the end of a run, in its output (the push, postsubmit's log, `up`'s stderr):
   `crate: hold 0s, image 2s (stored), tools 1s, setup 61s, build 140s, needs 3s, app 5s, check 30s; total 242s, pass`

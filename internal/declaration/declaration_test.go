@@ -172,3 +172,31 @@ func TestBatchIsACountOfChanges(t *testing.T) {
 		t.Errorf("batch = -1: expected an error that names batch, got %v", err)
 	}
 }
+
+func TestShipImageNeedsTheImageWhereItShipsAndItsRunFiles(t *testing.T) {
+	base := "ship = \"image\"\n[app]\nbuild = \"Containerfile\"\npublish = \"ghcr.io/o/app\"\nquadlets = \"deploy/quadlets\"\n[[app.ports]]\nname = \"web\"\nport = 3000\n"
+	d, err := declaration.Parse([]byte(base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !d.ShipsImage() || d.App.Publish != "ghcr.io/o/app" || d.App.Quadlets != "deploy/quadlets" {
+		t.Fatalf("read: %+v", d.App)
+	}
+	for name, c := range map[string]struct{ from, to, says string }{
+		"no publish":        {"publish = \"ghcr.io/o/app\"\n", "", "[app] publish"},
+		"no quadlets":       {"quadlets = \"deploy/quadlets\"\n", "", "[app] quadlets"},
+		"a tag on publish":  {"ghcr.io/o/app\"", "ghcr.io/o/app:latest\"", "no tag"},
+		"a digest":          {"ghcr.io/o/app\"", "ghcr.io/o/app@sha256:ab\"", "no tag"},
+		"publish, no image": {"ship = \"image\"\n", "", "expected ship = \"image\""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := declaration.Parse([]byte(strings.Replace(base, c.from, c.to, 1)))
+			if err == nil || !strings.Contains(err.Error(), c.says) {
+				t.Fatalf("expected an error that says %q, got %v", c.says, err)
+			}
+		})
+	}
+	if _, err := declaration.Parse([]byte(strings.Replace(base, "ghcr.io/o/app\"", "localhost:5000/o/app\"", 1))); err != nil {
+		t.Fatalf("a registry's port is no tag: %v", err)
+	}
+}

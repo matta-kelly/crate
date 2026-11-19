@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
@@ -57,15 +58,24 @@ type Port struct {
 // image; health is the command run inside the app that says it is ready, as a quadlet's HealthCmd; env is the
 // built app's env in crate's runs; ports are its ports, the first the workspace's own host. needs is the shape of
 // the app's binding: the env each place that runs it must give (the workspace by [tools] env or up -e, a check by
-// env, production by its own), and without which the built image refuses to start.
+// env, production by its own), and without which the built image refuses to start. publish is the repository the
+// image ships to when ship is "image", and quadlets the folder of its run files, which ship beside it.
 type App struct {
-	Build   string            `toml:"build"`
-	Command string            `toml:"command"`
-	Health  string            `toml:"health"`
-	Env     map[string]string `toml:"env"`
-	Ports   []Port            `toml:"ports"`
-	Needs   []string          `toml:"needs"`
+	Build    string            `toml:"build"`
+	Command  string            `toml:"command"`
+	Health   string            `toml:"health"`
+	Env      map[string]string `toml:"env"`
+	Ports    []Port            `toml:"ports"`
+	Needs    []string          `toml:"needs"`
+	Publish  string            `toml:"publish"`
+	Quadlets string            `toml:"quadlets"`
 }
+
+// ShipImage is the ship that publishes the image a check built and ran, with its run files beside it.
+const ShipImage = "image"
+
+// ShipsImage says the repo ships its app's image.
+func (d Declaration) ShipsImage() bool { return d.Ship == ShipImage }
 
 // Declaration is a crate.toml. A flat key it does not hold is empty.
 type Declaration struct {
@@ -106,6 +116,23 @@ func Parse(data []byte) (Declaration, error) {
 	}
 	if d.App.Build != "" && len(d.App.Ports) == 0 {
 		return Declaration{}, fmt.Errorf("crate.toml: [app] build has no [[app.ports]]: a built app must say the port it serves")
+	}
+	if d.Ship == ShipImage {
+		var missing []string
+		for key, value := range map[string]string{"[app] build": d.App.Build, "[app] publish": d.App.Publish, "[app] quadlets": d.App.Quadlets} {
+			if value == "" {
+				missing = append(missing, key)
+			}
+		}
+		if len(missing) > 0 {
+			sort.Strings(missing)
+			return Declaration{}, fmt.Errorf("crate.toml: ship = %q needs %s: the image, where it ships, and its run files", ShipImage, strings.Join(missing, ", "))
+		}
+		if strings.Contains(d.App.Publish, "@") || strings.Contains(d.App.Publish[strings.LastIndex(d.App.Publish, "/")+1:], ":") {
+			return Declaration{}, fmt.Errorf("crate.toml: [app] publish %q: expected a repository with no tag; crate tags each image by its commit", d.App.Publish)
+		}
+	} else if d.App.Publish != "" || d.App.Quadlets != "" {
+		return Declaration{}, fmt.Errorf("crate.toml: [app] publish and quadlets are the image's ship; expected ship = %q", ShipImage)
 	}
 	for _, need := range d.App.Needs {
 		if !envName.MatchString(need) {

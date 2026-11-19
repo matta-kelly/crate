@@ -21,18 +21,20 @@ import (
 
 // The steps of a run, in the order a run takes them. A step that does not run writes no line.
 const (
-	Wait     = "wait"     // a change's time in the queue before a run took it
-	Hold     = "hold"     // the wait for the system's slot on its machine
-	Image    = "image"    // the dev image on this machine; its note says stored, pulled or built
-	Services = "services" // the network and each service's pod
-	Tools    = "tools"    // the tools member, made or started
-	Setup    = "setup"    // [tools] setup, on a new tools member only
-	Build    = "build"    // the built app's image, for a check or postsubmit
-	Needs    = "needs"    // the proof that the built app refuses to start without its needs
-	App      = "app"      // the app, started until healthy, and its routes
-	Check    = "check"    // scripts/check.sh
-	Revert   = "revert"   // postsubmit's revert of a red main
-	Total    = "total"    // the whole run; its result is the run's
+	Wait     = "wait"      // a change's time in the queue before a run took it
+	Hold     = "hold"      // the wait for the system's slot on its machine
+	Image    = "image"     // the dev image on this machine; its note says stored, pulled or built
+	Services = "services"  // the network and each service's pod
+	Tools    = "tools"     // the tools member, made or started
+	Setup    = "setup"     // [tools] setup, on a new tools member only
+	Build    = "build"     // the built app's image, for a check or postsubmit
+	Needs    = "needs"     // the proof that the built app refuses to start without its needs
+	App      = "app"       // the app, started until healthy, and its routes
+	Check    = "check"     // scripts/check.sh
+	Revert   = "revert"    // postsubmit's revert of a red main
+	Push     = "push"      // a green main's image, pushed where [app] publish names
+	RunFiles = "run files" // its run files, stamped and pushed beside it
+	Total    = "total"     // the whole run; its result is the run's
 )
 
 // The results of a step, and of a run.

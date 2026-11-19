@@ -1,6 +1,7 @@
 package gate
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,8 +13,13 @@ import (
 )
 
 // StartWorker starts the repo's worker, crate queue run <bare>, when changes wait and none runs. Its output goes to
-// worker.log.
+// worker.log. It also starts the publish of a green main not yet published (StartShip), after the worker, so a publish
+// that cannot start never holds the queue.
 func (r *Repo) StartWorker() error {
+	return errors.Join(r.startWorker(), r.StartShip())
+}
+
+func (r *Repo) startWorker() error {
 	if q, err := r.readQueue(); err != nil || len(q) == 0 {
 		return err
 	}

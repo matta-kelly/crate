@@ -14,6 +14,7 @@ func init() {
 	register("hook", hookVerb)
 	register("queue", queueVerb)
 	register("postsubmit", postsubmitVerb)
+	register("ship", shipVerb)
 }
 
 const (
@@ -108,6 +109,21 @@ func postsubmitVerb(args []string) error {
 		return err
 	}
 	if err := r.Postsubmit(os.Stdout); err != nil {
+		return commandExit(1)
+	}
+	return nil
+}
+
+// shipVerb publishes the repo's green main: the image its check kept, and its run files beside it, then the pin line.
+func shipVerb(args []string) error {
+	if len(args) != 1 {
+		return usagef("crate ship <bare repo>")
+	}
+	r, err := gate.Open(args[0])
+	if err != nil {
+		return err
+	}
+	if err := r.Ship(os.Stdout); err != nil {
 		return commandExit(1)
 	}
 	return nil

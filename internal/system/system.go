@@ -49,6 +49,7 @@ type Spec struct {
 	Router   Router      // a person's workspace's routes; nil for none
 	Image    string      // the tools member's image when the caller has one; "" for the repo's dev image
 	Record   *record.Run // the run that records Hold's, Image's and Up's steps; nil for none
+	Source   string      // the built app's org.opencontainers.image.source label, the repo's URL; "" for none
 }
 
 // System is a system of one name on one machine.

@@ -13,6 +13,7 @@
 //	release.lock       one release at a time, so two moves of main are released in order
 //	postsubmit.lock    one postsubmit at a time
 //	postsubmit/        green (the last main that passed), <sha>.log (each run's output), run.log
+//	ship/              published (the last main whose image was published), run.log, ship.lock
 //	log.jsonl          the record: one JSON line per step of each run: check, land, postsubmit, mirror, release
 package gate
 

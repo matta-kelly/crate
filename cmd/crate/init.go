@@ -143,7 +143,8 @@ func initRepo(bare, github string, out io.Writer, say bool) error {
 // applyVerb makes this server match its declaration, KEY=value lines: GIT_HOME, where the bare repos live;
 // GITHUB_BASE, the url each repo's copy goes to, before /<repo>.git; REPOS, the repos. Safe to run again: it inits
 // each repo, seeds a new one's main from GitHub, and starts the worker of a repo whose queue holds changes, so a
-// worker that stopped is started again. The binary's own version is its install's.
+// worker that stopped is started again, and the publish of a green main not yet published, so a failed one is tried
+// again. The binary's own version is its install's.
 func applyVerb(args []string) error {
 	if len(args) != 1 {
 		return usagef("%s", applyUsage)
