@@ -117,17 +117,30 @@ crate does not run.
 
 ## The dev image
 
-`crate dev-image <hash|ref|ensure|promote|local> [--rev <commit>]`: one image per hash of the repo's `[dev] inputs`,
-in ghcr as `ghcr.io/matta-kelly/<name>-dev` (or `[dev] image`). A repo declares `name` and `[dev] inputs`; crate
-guesses neither, and refuses a `crate.toml` that lacks one, in the queue too.
+`crate dev-image <hash|ref|local> [--rev <commit>]`: one image per hash of the repo's `[dev] inputs`, in ghcr as
+`ghcr.io/matta-kelly/<name>-dev` (or `[dev] image`). A repo declares `name` and `[dev] inputs`; crate guesses neither,
+and refuses a `crate.toml` that lacks one, in the queue too.
 
 - `hash`: the hash of the inputs at the commit
 - `ref`: `<image>@<digest>` of `<image>:<hash>`, else of `<image>:main`. Never builds
-- `ensure`: build, smoke and push `<image>:<hash>` when the registry lacks it
-- `promote`: point `<image>:main` at `<image>:<hash>`
 - `local`: put `<image>:<hash>` in this machine's store: its copy, a pull, or a build with no push
 - the smoke: a build is kept only when `[tools] setup` passes in it with no network, on a copy of the commit's tree, so
   the image holds what the lockfiles name and a workspace's setup downloads nothing. A repo with no setup has no smoke
+
+```
+the cache: the registry holds each dev image by the hash of its inputs, so its copy is the same image on every machine
+├── the writer: the merge queue on the server, alone
+│   ├── a check or postsubmit that makes a dev image starts crate cache <bare>, which pushes it by its hash at once, in
+│   │   a process of its own, so an upload never holds a check. An image whose change never lands is pushed too: it
+│   │   is addressed by hash, so it misleads no one
+│   └── a green main pushes its own image again as <image>:main, the image `ref` falls back to
+├── the readers: every other machine. `local` pulls by the hash, and builds only an image no check has made yet: the
+│   change that edits an input, in its author's workspace
+└── a push that fails (no login, a registry that is down) is recorded, and tried again by the next check, the next
+    green main, the worker's next start and crate apply. The writes need podman alone, logged in by the ship's login
+```
+
+The cache's state lives in `<bare>/crate/cache`: `pushed` (each hash pushed), `main` (the hash `:main` is), `run.log`.
 
 ## The merge queue
 
@@ -221,7 +234,8 @@ it, so a node runs what crate tested. Nothing on GitHub builds it again.
   - the pin line, printed and on the record: `<name> <build> <publish>-quadlets sha256:<manifest digest>`. A node's
     releases file takes it (monkeydo fetches the manifest by that digest and saves the layer by its title)
 - the login: `$XDG_CONFIG_HOME/crate/push-auth.json` (`~/.config` when unset), podman's `auth.json` format, with a
-  token that may write the packages. Only the publish reads it; no check, postsubmit or workspace mounts it
+  token that may write the packages. Only the publish and the dev image cache read it; no check, postsubmit or
+  workspace mounts it
 - the rule is a node's: the green main is published. A publish that fails (no login, a registry that is down) is
   recorded, and main and the queue go on. It is tried again, with the same kept image, by the next green main, the
   worker's next start and `crate apply`; a newer green main takes the place of one not yet published.
@@ -235,10 +249,11 @@ it, so a node runs what crate tested. Nothing on GitHub builds it again.
 
 crate's record of what it did and how long each part took: one JSON line per step of a run, appended as the step
 ends, and a total line when the run ends. A run is one thing crate does: a check, a change's land through the queue,
-a postsubmit, an `up`, a copy to GitHub (mirror) or a release (a version, or an image's publish).
+a postsubmit, an `up`, a copy to GitHub (mirror), a release (a version, or an image's publish) or a push of dev images
+(cache).
 
 - the files
-  - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror, release and intake of that repo
+  - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror, release, cache and intake of that repo
   - a person: `$XDG_STATE_HOME/crate/log.jsonl` (`~/.local/state` when unset), each `up` of that user
 - the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass` or `fail`),
   `note` (why it failed, or what: the image's `stored`, `pulled` or `built`, a check's changes, a land's main, a
@@ -253,7 +268,9 @@ a postsubmit, an `up`, a copy to GitHub (mirror) or a release (a version, or an 
   - `app`: started until healthy, and its routes
   - `check`: `scripts/check.sh`
   - `revert`: postsubmit's revert of a red main
-  - `push`, `run files`: a publish's image, and its run files beside it (a release of `ship = "image"`)
+  - `push`, `run files`: a publish's image, and its run files beside it (a release of `ship = "image"`); a dev
+    image the cache pushed by its hash
+  - `point`: the cache's push of the green main's dev image as `:main`
   - `total`: the run, its result the run's; a land's runs from entering the queue to its verdict
 - the summary: one line at the end of a run, in its output (the push, postsubmit's log, `up`'s stderr):
   `crate: hold 0s, image 2s (stored), tools 1s, setup 61s, build 140s, needs 3s, app 5s, check 30s; total 242s, pass`

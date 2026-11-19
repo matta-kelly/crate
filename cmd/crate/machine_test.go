@@ -15,9 +15,10 @@ func TestARemoteEngineSaysOnceThatItPlacesNothing(t *testing.T) {
 	stopUserSlices(t, slice)
 	file := filepath.Join(f.dir, "machine.toml")
 	must(t, os.WriteFile(file, []byte("[count]\ncheck = 1\npostsubmit = 1\nattempt = 1\n"), 0o644))
-	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice, "CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock", f.stubPATH()}, "ensure")
+	f.inRegistry(image+":"+goldenHash, 2) // a pull, so the one `crate:` line is the remote engine's
+	r := f.dev([]string{"CRATE_MACHINE=" + file, "CRATE_SLICE=" + slice, "CONTAINER_HOST=unix:///run/user/1000/podman/podman.sock", f.stubPATH()}, "local")
 	if r.code != 0 {
-		t.Fatalf("ensure with CONTAINER_HOST and a machine file: expected exit 0, got %s", r)
+		t.Fatalf("local with CONTAINER_HOST and a machine file: expected exit 0, got %s", r)
 	}
 	calls := f.calls()
 	if strings.Contains(calls, "--cgroup-parent") {

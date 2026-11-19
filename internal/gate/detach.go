@@ -13,10 +13,10 @@ import (
 )
 
 // StartWorker starts the repo's worker, crate queue run <bare>, when changes wait and none runs. Its output goes to
-// worker.log. It also starts the publish of a green main not yet published (StartShip), after the worker, so a publish
-// that cannot start never holds the queue.
+// worker.log. It also starts the publish of a green main not yet published (StartShip) and the dev image cache's
+// pending work (StartCache), after the worker, so neither, when it cannot start, ever holds the queue.
 func (r *Repo) StartWorker() error {
-	return errors.Join(r.startWorker(), r.StartShip())
+	return errors.Join(r.startWorker(), r.StartShip(), r.StartCache())
 }
 
 func (r *Repo) startWorker() error {

@@ -22,11 +22,14 @@ func (r *Repo) after(commit string, out io.Writer) {
 	fmt.Fprintf(out, "crate: postsubmit runs %s in the background; GitHub gets main when it passes, and red reverts it through the queue\n", short(commit))
 }
 
-// publish is what follows a green main: the copy to GitHub, then the release. A failed copy leaves GitHub's main where
-// it was, and the next green main copies again.
+// publish is what follows a green main: the copy to GitHub, the release, and the dev image's :main moved to its own
+// (cache.go). A failed copy leaves GitHub's main where it was, and the next green main copies again.
 func (r *Repo) publish(commit string, out io.Writer) {
 	if r.CopyMain(commit) != nil {
 		fmt.Fprintln(out, "crate: the copy to github failed; the next green main copies again")
 	}
 	r.Release(commit, out)
+	if err := r.StartCache(); err != nil {
+		fmt.Fprintf(out, "crate: the dev image cache did not start: %v\n", err)
+	}
 }

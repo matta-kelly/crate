@@ -32,8 +32,9 @@ const (
 	App      = "app"       // the app, started until healthy, and its routes
 	Check    = "check"     // scripts/check.sh
 	Revert   = "revert"    // postsubmit's revert of a red main
-	Push     = "push"      // a green main's image, pushed where [app] publish names
+	Push     = "push"      // an image sent to the registry: a green main's app, where [app] publish names, or a dev image
 	RunFiles = "run files" // its run files, stamped and pushed beside it
+	Point    = "point"     // the dev image's :main moved to the green main's
 	Total    = "total"     // the whole run; its result is the run's
 )
 

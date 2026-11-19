@@ -84,38 +84,16 @@ func TestHashIgnoresOtherFiles(t *testing.T) {
 	}
 }
 
-// --- ensure ---
-
-func TestEnsureBuildsNothingWhenTheTagExists(t *testing.T) {
+// local with no copy and no image in the registry builds, smokes and tags, and pushes nothing: only the queue writes
+// the registry (gate/cache.go).
+func TestLocalBuildsSmokesAndTagsWhenNothingHasTheImage(t *testing.T) {
 	f := newFx(t, "que-pasa")
-	f.inRegistry(image+":"+goldenHash, 7)
-	r := f.dev(nil, "ensure")
-	calls := f.calls()
-	if r.code != 0 {
-		t.Fatalf("the exit: expected 0, got %s", r)
-	}
-	for _, not := range []string{"podman build", "podman push", "smoke", "skopeo copy"} {
-		if strings.Contains(calls, not) {
-			t.Errorf("the calls: expected no %q, got\n%s", not, calls)
-		}
-	}
-	if want := image + "@" + digest(7) + "\n"; r.out != want {
-		t.Errorf("stdout: expected %q, got %q", want, r.out)
-	}
-	if !strings.Contains(r.err, image+":"+goldenHash+" exists: not built") {
-		t.Errorf("stderr: expected it to say the tag exists, got %q", r.err)
-	}
-}
-
-func TestEnsureBuildsSmokesAndPushesWhenTheTagIsMissing(t *testing.T) {
-	f := newFx(t, "que-pasa")
-	r := f.dev(nil, "ensure")
+	r := f.dev(nil, "local")
 	tag := image + ":" + goldenHash
 	want := strings.Join([]string{
 		"podman build --cgroup-parent=" + f.buildSlice() + " -f .crate/Containerfile -t " + tag + "-candidate .",
 		"smoke " + tag + "-candidate: " + smokeCommand,
 		"podman tag " + tag + "-candidate " + tag,
-		"podman push " + tag,
 	}, "\n")
 	if r.code != 0 {
 		t.Fatalf("the exit: expected 0, got %s", r)
@@ -126,18 +104,18 @@ func TestEnsureBuildsSmokesAndPushesWhenTheTagIsMissing(t *testing.T) {
 	if !strings.Contains(f.calls(), "podman image rm "+tag+"-candidate") {
 		t.Errorf("the calls: expected the candidate to be dropped, got\n%s", f.calls())
 	}
-	if want := image + "@sha256:"; !strings.HasPrefix(r.out, want) || len(lines(r.out)) != 1 {
-		t.Errorf("stdout: expected one line, the ref of the pushed tag, got %q", r.out)
+	if r.out != tag+"\n" {
+		t.Errorf("stdout: expected %q, got %q", tag, r.out)
 	}
 }
 
-func TestEnsureMovesNothingOnAFailedSmoke(t *testing.T) {
+func TestAFailedSmokeTagsAndPushesNothing(t *testing.T) {
 	f := newFx(t, "que-pasa")
-	r := f.dev([]string{"SMOKE_EXIT=1"}, "ensure")
+	r := f.dev([]string{"SMOKE_EXIT=1"}, "local")
 	if r.code != 1 {
 		t.Errorf("the exit: expected 1, got %s", r)
 	}
-	for _, not := range []string{"podman push", "skopeo copy"} {
+	for _, not := range []string{"podman tag", "podman push", "skopeo copy"} {
 		if strings.Contains(f.calls(), not) {
 			t.Errorf("the calls: expected no %q, got\n%s", not, f.calls())
 		}
@@ -150,16 +128,12 @@ func TestAFailedSmokeLeavesNoImage(t *testing.T) {
 	f := newFx(t, "que-pasa")
 	tag := image + ":" + goldenHash
 	env := []string{"SMOKE_EXIT=1"}
-	ensure := f.dev(env, "ensure")
-	if ensure.code != 1 || strings.Contains(f.local(), tag+"\n") {
-		t.Errorf("after a failed ensure: expected exit 1 and no %s on this machine, got %s\nstore: %q", tag, ensure, f.local())
-	}
 	local := f.dev(env, "local")
 	if local.code != 1 || strings.Contains(f.local(), tag+"\n") {
 		t.Errorf("after a failed local: expected exit 1 and no %s on this machine, got %s\nstore: %q", tag, local, f.local())
 	}
 	if strings.Contains(f.local(), tag+"-candidate") {
-		t.Errorf("after both: expected no candidate on this machine, got %q", f.local())
+		t.Errorf("after it: expected no candidate on this machine, got %q", f.local())
 	}
 }
 
@@ -178,38 +152,6 @@ func TestAFailedSmokeDoesNotLeaveAGoodImage(t *testing.T) {
 	}
 	if n := len(lines(f.callsMatching("smoke "))); n != 2 {
 		t.Errorf("the smokes: expected 2, got %d", n)
-	}
-}
-
-// --- promote ---
-
-func TestPromotePointsMainAtTheCommitsTag(t *testing.T) {
-	f := newFx(t, "que-pasa")
-	f.inRegistry(image+":"+goldenHash, 3)
-	r := f.dev(nil, "promote")
-	if r.code != 0 {
-		t.Fatalf("the exit: expected 0, got %s", r)
-	}
-	want := "skopeo copy --preserve-digests docker://" + image + ":" + goldenHash + " docker://" + image + ":main"
-	if !strings.Contains(f.calls(), want) {
-		t.Errorf("the calls: expected %q, got\n%s", want, f.calls())
-	}
-	if want := image + "@" + digest(3) + "\n"; r.out != want {
-		t.Errorf("stdout: expected %q, got %q", want, r.out)
-	}
-}
-
-func TestPromoteFailsWhenTheTagIsMissing(t *testing.T) {
-	f := newFx(t, "que-pasa")
-	r := f.dev(nil, "promote")
-	if r.code != 1 {
-		t.Errorf("the exit: expected 1, got %s", r)
-	}
-	if strings.Contains(f.calls(), "skopeo copy") {
-		t.Errorf("the calls: expected no skopeo copy, got\n%s", f.calls())
-	}
-	if !strings.Contains(r.err, image+":"+goldenHash) {
-		t.Errorf("stderr: expected it to name %s:%s, got %q", image, goldenHash, r.err)
 	}
 }
 
@@ -387,8 +329,6 @@ func TestEachVerbPrintsOneLineOnStdout(t *testing.T) {
 	}{
 		{"hash", func(f *fx) {}, "hash", goldenHash},
 		{"ref", func(f *fx) { f.inRegistry(image+":"+goldenHash, 7) }, "ref", goldenRef},
-		{"ensure that builds", func(f *fx) {}, "ensure", ""},
-		{"promote", func(f *fx) { f.inRegistry(image+":"+goldenHash, 7) }, "promote", goldenRef},
 		{"local that builds", func(f *fx) {}, "local", image + ":" + goldenHash},
 		{"local that pulls", func(f *fx) { f.inRegistry(image+":"+goldenHash, 7) }, "local", image + ":" + goldenHash},
 	}
@@ -421,7 +361,6 @@ func TestEveryFailureHasOneReasonLineOnStderr(t *testing.T) {
 		prep func(f *fx)
 	}{
 		{"ref with neither tag", "ref", nil, func(f *fx) {}},
-		{"promote with no tag", "promote", nil, func(f *fx) {}},
 		{"hash with a missing input", "hash", nil, func(f *fx) { f.remove("package-lock.json") }},
 		{"local with a failed smoke", "local", []string{"SMOKE_EXIT=1"}, func(f *fx) {}},
 	}
@@ -444,7 +383,7 @@ func TestARegistryThatFailsIsNotAMissingTag(t *testing.T) {
 		{"a 5xx", "received unexpected HTTP status: 503 Service Unavailable"},
 	}
 	for _, row := range rows {
-		for _, verb := range []string{"ref", "ensure", "promote"} {
+		for _, verb := range []string{"ref"} {
 			t.Run(row.name+" "+verb, func(t *testing.T) {
 				f := newFx(t, "que-pasa")
 				r := f.dev([]string{"SKOPEO_ERR=" + row.skopeo}, verb)
@@ -469,50 +408,21 @@ func TestARegistryThatFailsIsNotAMissingTag(t *testing.T) {
 	}
 }
 
-// ghcr answers "denied" for a package that does not exist yet, and "name unknown" for an image with no package:
-// for ensure each is a missing tag, so a new repo's first image is made.
-func TestEnsureBuildsAndPushesWhenGhcrAnswersDeniedOrNameUnknown(t *testing.T) {
-	for _, msg := range []string{"denied: requested access to the resource is denied", "name unknown: repository name not known to registry"} {
-		t.Run(msg, func(t *testing.T) {
-			f := newFx(t, "que-pasa")
-			r := f.dev([]string{"SKOPEO_ERR=" + msg}, "ensure")
-			tag := image + ":" + goldenHash
-			if r.code != 0 || !strings.HasPrefix(r.out, image+"@sha256:") || len(lines(r.out)) != 1 {
-				t.Errorf("expected exit 0 and one line, the ref, got %s", r)
-			}
-			for _, want := range []string{"podman build", "podman push " + tag} {
-				if !strings.Contains(f.calls(), want) {
-					t.Errorf("the calls: expected %q, got\n%s", want, f.calls())
-				}
-			}
-		})
-	}
-}
-
-func TestDeniedIsAFailureForRefAndPromoteAndNameUnknownIsAMissingTag(t *testing.T) {
+func TestDeniedIsAFailureForRefAndNameUnknownIsAMissingTag(t *testing.T) {
 	const denied = "denied: requested access to the resource is denied"
 	const unknown = "name unknown: repository name not known to registry"
-	for _, verb := range []string{"ref", "promote"} {
-		t.Run("denied "+verb, func(t *testing.T) {
-			f := newFx(t, "que-pasa")
-			r := f.dev([]string{"SKOPEO_ERR=" + denied}, verb)
-			if r.code != 1 || !strings.Contains(r.err, denied) || !strings.Contains(r.err, goldenHash) || strings.Contains(r.err, "neither") || r.out != "" {
-				t.Errorf("expected exit 1 and a failure that names the tag and skopeo's message, got %s", r)
-			}
-		})
-	}
+	t.Run("denied ref", func(t *testing.T) {
+		f := newFx(t, "que-pasa")
+		r := f.dev([]string{"SKOPEO_ERR=" + denied}, "ref")
+		if r.code != 1 || !strings.Contains(r.err, denied) || !strings.Contains(r.err, goldenHash) || strings.Contains(r.err, "neither") || r.out != "" {
+			t.Errorf("expected exit 1 and a failure that names the tag and skopeo's message, got %s", r)
+		}
+	})
 	t.Run("name unknown ref", func(t *testing.T) {
 		f := newFx(t, "que-pasa")
 		r := f.dev([]string{"SKOPEO_ERR=" + unknown}, "ref")
 		if r.code != 1 || !strings.Contains(r.err, "neither") {
 			t.Errorf("expected exit 1 and `neither ... exists`, got %s", r)
-		}
-	})
-	t.Run("name unknown promote", func(t *testing.T) {
-		f := newFx(t, "que-pasa")
-		r := f.dev([]string{"SKOPEO_ERR=" + unknown}, "promote")
-		if r.code != 1 || !strings.Contains(r.err, "ensure") || !strings.Contains(r.err, image+":"+goldenHash) {
-			t.Errorf("expected exit 1 and the missing tag with `run ensure first`, got %s", r)
 		}
 	})
 }
@@ -555,10 +465,7 @@ func TestAFailedStepExitsWithTheStepAndLeavesNoImage(t *testing.T) {
 		verb string
 	}{
 		{"build", "build", "local"},
-		{"build in ensure", "build", "ensure"},
 		{"tag", "tag", "local"},
-		{"tag in ensure", "tag", "ensure"},
-		{"push", "push", "ensure"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -606,8 +513,6 @@ func TestACallPastItsLimitStopsAndSaysWhatItWaitedFor(t *testing.T) {
 		reg   bool
 	}{
 		{"skopeo inspect", 30, "skopeo inspect", "ref", "skopeo inspect", false},
-		{"skopeo copy", 600, "skopeo copy", "promote", "skopeo copy", true},
-		{"podman push", 900, "push", "ensure", "podman push", false},
 		{"podman build", 1800, "build", "local", "podman build", false},
 		{"the smoke", 600, "smoke", "local", "smoke", false},
 		{"podman image exists", 30, "image", "local", "image exists", false},
@@ -908,7 +813,7 @@ func TestRevReadsTheCommitsTreeFromABareRepo(t *testing.T) {
 }
 
 func TestRevIsRefusedByVerbsThatBuildFromACheckout(t *testing.T) {
-	for _, verb := range []string{"local", "ensure", "promote"} {
+	for _, verb := range []string{"local"} {
 		t.Run(verb, func(t *testing.T) {
 			f := newFx(t, "que-pasa")
 			r := f.dev(nil, verb, "--rev", "HEAD")
@@ -932,8 +837,7 @@ func TestARemoteEngineNeedsOnlyPodmanAndSkopeoOnThePath(t *testing.T) {
 	hash := f.dev(env, "hash")
 	ref := f.dev(env, "ref")
 	local := f.dev(env, "local")
-	ensure := f.dev(env, "ensure")
-	for name, r := range map[string]result{"hash": hash, "ref": ref, "local": local, "ensure": ensure} {
+	for name, r := range map[string]result{"hash": hash, "ref": ref, "local": local} {
 		if r.code != 0 {
 			t.Errorf("%s with CONTAINER_HOST and no machine file: expected exit 0, got %s", name, r)
 		}
@@ -951,8 +855,8 @@ func TestARemoteEngineNeedsOnlyPodmanAndSkopeoOnThePath(t *testing.T) {
 			t.Errorf("a call outside podman image exists, images, pull, build, tag, image rm and push, and skopeo: %q", l)
 		}
 	}
-	if !strings.Contains(calls, "podman build") || !strings.Contains(calls, "podman push") {
-		t.Errorf("the calls: expected a build and a push, got\n%s", calls)
+	if !strings.Contains(calls, "podman build") {
+		t.Errorf("the calls: expected a build, got\n%s", calls)
 	}
 }
 

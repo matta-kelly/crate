@@ -13,10 +13,7 @@ import (
 
 func init() { register("dev-image", devImage) }
 
-const devImageUsage = "crate [-C <path>] dev-image <hash|ref|ensure|promote|local> [--rev <commit>]"
-
-// buildsFromACheckout are the sub-verbs that read the working tree, so a commit alone is not enough for them.
-var buildsFromACheckout = []string{"ensure", "promote", "local"}
+const devImageUsage = "crate [-C <path>] dev-image <hash|ref|local> [--rev <commit>]"
 
 func devImage(args []string) error {
 	if len(args) == 0 {
@@ -29,11 +26,11 @@ func devImage(args []string) error {
 	if err := flags.Parse(args[1:]); err != nil || flags.NArg() > 0 {
 		return usagef("%s", devImageUsage)
 	}
-	if !slices.Contains([]string{"hash", "ref", "ensure", "promote", "local"}, sub) {
+	if !slices.Contains([]string{"hash", "ref", "local"}, sub) {
 		return usagef("%s", devImageUsage)
 	}
-	if *rev != "" && slices.Contains(buildsFromACheckout, sub) {
-		return usagef("dev-image %s builds from a checkout: --rev is for hash and ref", sub)
+	if *rev != "" && sub == "local" {
+		return usagef("dev-image local builds from a checkout: --rev is for hash and ref")
 	}
 
 	root, err := devimage.Toplevel(".")
@@ -51,18 +48,12 @@ func devImage(args []string) error {
 		result, err = devimage.Hash(o)
 	case "ref":
 		result, err = devimage.Ref(o)
-	case "promote":
-		result, err = devimage.Promote(o)
-	default: // ensure and local start a container
+	default: // local may start a container
 		var placement machine.Placement
 		if placement, err = placeBuild(); err != nil {
 			return err
 		}
-		if sub == "ensure" {
-			result, err = devimage.Ensure(o, placement)
-		} else {
-			result, _, err = devimage.Local(o, placement)
-		}
+		result, _, err = devimage.Local(o, placement)
 	}
 	if err != nil {
 		return err

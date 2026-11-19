@@ -1,5 +1,5 @@
-// Package devimage finds, builds and pushes a repo's dev image: one per hash of its inputs, built once
-// wherever it is first needed.
+// Package devimage finds, builds and caches a repo's dev image: one per hash of its inputs, built where it is first
+// needed and kept in the registry by that hash (cache.go).
 package devimage
 
 import (
@@ -75,55 +75,6 @@ func Ref(o Options) (string, error) {
 	return "", fmt.Errorf("neither %s:%s nor %s:main exists", p.image, hash, p.image)
 }
 
-// Ensure builds, smokes and pushes <image>:<hash> only when the registry lacks it, and returns its ref. Any
-// change may run it: each set of inputs is built once.
-func Ensure(o Options, placement machine.Placement) (string, error) {
-	p, hash, err := openAtHash(o)
-	if err != nil {
-		return "", err
-	}
-	tag := p.image + ":" + hash
-	_, found, err := p.digest(hash, true)
-	if err != nil {
-		return "", err
-	}
-	if found {
-		fmt.Fprintf(p.stderr, "%s exists: not built\n", tag)
-	} else {
-		if err := p.buildTo(tag, placement); err != nil {
-			return "", err
-		}
-		if err := p.podman("podman push", limit.Push(), p.stderr, "push", tag); err != nil {
-			p.drop(tag)
-			return "", err
-		}
-	}
-	return p.refOf(hash)
-}
-
-// Promote points <image>:main at <image>:<hash>, also when nothing was built: a main that goes back to old
-// inputs gets their image back.
-func Promote(o Options) (string, error) {
-	p, hash, err := openAtHash(o)
-	if err != nil {
-		return "", err
-	}
-	_, found, err := p.digest(hash, false)
-	if err != nil {
-		return "", err
-	}
-	if !found {
-		return "", fmt.Errorf("%s:%s is not in the registry: run ensure first", p.image, hash)
-	}
-	err = run(call{name: "skopeo copy", limit: limit.SkopeoCopy(), prog: "skopeo",
-		args: []string{"copy", "--preserve-digests", "docker://" + p.image + ":" + hash, "docker://" + p.image + ":main"}},
-		p.stderr, p.stderr)
-	if err != nil {
-		return "", err
-	}
-	return p.refOf(hash)
-}
-
 // Source is how Local got the image: the machine's copy, a pull, or a build.
 type Source string
 
@@ -149,7 +100,8 @@ func Local(o Options, placement machine.Placement) (string, Source, error) {
 		return tag, Stored, nil
 	}
 	source := Pulled
-	if err = p.podmanIn(placement, "podman pull", limit.Pull(), p.stderr, "pull", tag); err != nil {
+	pull := append(append([]string{"pull"}, registryFlags(tag, "")...), tag)
+	if err = p.podmanIn(placement, "podman pull", limit.Pull(), p.stderr, pull...); err != nil {
 		fmt.Fprintf(p.stderr, "crate: %v, so %s is built\n", err, tag)
 		if err = p.buildTo(tag, placement); err != nil {
 			return tag, "", err
@@ -173,7 +125,7 @@ func (p *plan) dropOlder(hash string) {
 		return
 	}
 	for _, ref := range strings.Fields(out.String()) {
-		repo, tag, ok := strings.Cut(ref, ":")
+		repo, tag, ok := cutTag(ref)
 		if !ok || repo != p.image || tag == hash || !hashTag.MatchString(tag) {
 			continue
 		}
@@ -190,15 +142,20 @@ func openAtHash(o Options) (*plan, string, error) {
 	return p, hash, err
 }
 
-// digest is the manifest digest of <image>:<tag>. A registry that says the tag or the name is not there
-// ("manifest unknown", "name unknown") gives found false. ghcr says "denied" for a package that does not exist
-// yet, so ensure, which makes the package, reads it as missing too (deniedIsMissing). Any other failure of the
-// ask is an error, never read as a missing tag.
+// digest is the manifest digest of <image>:<tag>, read with the registry's own login.
 func (p *plan) digest(tag string, deniedIsMissing bool) (digest string, found bool, err error) {
-	ref := p.image + ":" + tag
+	return digestOf(p.image+":"+tag, "", deniedIsMissing)
+}
+
+// digestOf is the manifest digest of ref, read with authfile ("" for skopeo's own login). A registry that says the tag
+// or the name is not there ("manifest unknown", "name unknown") gives found false. ghcr says "denied" for a package
+// that does not exist yet, so a push, which makes the package, reads it as missing too (deniedIsMissing). Any other
+// failure of the ask is an error, never read as a missing tag.
+func digestOf(ref, authfile string, deniedIsMissing bool) (digest string, found bool, err error) {
 	var out, errb bytes.Buffer
+	args := append([]string{"inspect", "--format", "{{.Digest}}"}, registryFlags(ref, authfile)...)
 	err = run(call{name: "skopeo inspect", limit: limit.SkopeoInspect(), prog: "skopeo",
-		args: []string{"inspect", "--format", "{{.Digest}}", "docker://" + ref}}, &out, &errb)
+		args: append(args, "docker://"+ref)}, &out, &errb)
 	if err == nil {
 		return strings.TrimSpace(out.String()), true, nil
 	}
@@ -211,14 +168,6 @@ func (p *plan) digest(tag string, deniedIsMissing bool) (digest string, found bo
 		msg = err.Error()
 	}
 	return "", false, fmt.Errorf("the registry, for %s: %s", ref, msg)
-}
-
-func (p *plan) refOf(hash string) (string, error) {
-	digest, found, err := p.digest(hash, false)
-	if err == nil && !found {
-		err = fmt.Errorf("%s:%s is not in the registry after its push", p.image, hash)
-	}
-	return p.image + "@" + digest, err
 }
 
 // stored says this machine's store holds the tag. Exit 1 of `image exists` is its answer "no".

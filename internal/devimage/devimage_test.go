@@ -19,7 +19,8 @@ echo "podman $*" >>"$T/calls"
 case $1 in
 build) tag=; while [ $# -gt 0 ]; do [ "$1" = -t ] && tag=$2; shift; done; echo "$tag" >>"$T/local" ;;
 tag) echo "$3" >>"$T/local" ;;
-push) echo "$2 sha256:$(echo "$2" | sha256sum | cut -c1-64)" >>"$T/registry" ;;
+push) ref=${!#}; echo "$ref sha256:$(echo "$ref" | sha256sum | cut -c1-64)" >>"$T/registry" ;;
+images) cat "$T/local" ;;
 pull) [ -n "$PULLS" ] || exit 1; echo "$2" >>"$T/local" ;;
 image) case $2 in exists) grep -qxF -- "$3" "$T/local" ;; esac ;;
 esac
@@ -27,6 +28,11 @@ esac
 
 const skopeoStub = `#!/usr/bin/env bash
 echo "skopeo $*" >>"$T/calls"
+if [ "$1" = copy ]; then
+  n=$#; src=${@:$((n-1)):1}; dst=${!#}; src=${src#docker://}; dst=${dst#docker://}
+  d=$(awk -v r="$src" '$1 == r {print $2}' "$T/registry" | tail -1)
+  echo "$dst $d" >>"$T/registry"; exit 0
+fi
 ref=${!#}; ref=${ref#docker://}
 d=$(awk -v r="$ref" '$1 == r {print $2}' "$T/registry" | tail -1)
 [ -n "$d" ] || { echo "manifest unknown: $ref" >&2; exit 1; }
@@ -111,7 +117,7 @@ func TestTheBuildTakesItsPlacementFromItsCaller(t *testing.T) {
 	}{{"Local", func(o devimage.Options, p machine.Placement) (string, error) {
 		tag, _, err := devimage.Local(o, p)
 		return tag, err
-	}}, {"Ensure", devimage.Ensure}}
+	}}}
 	for _, verb := range verbs {
 		for _, row := range rows {
 			t.Run(verb.name+" with "+row.name, func(t *testing.T) {
@@ -155,8 +161,8 @@ func TestLocalSaysWhereTheImageCameFrom(t *testing.T) {
 func TestOnlyTheBuildNamesTheSlice(t *testing.T) {
 	root, calls := given(t)
 	var stderr bytes.Buffer
-	if got, err := devimage.Ensure(devimage.Options{Root: root, Stderr: &stderr}, "crate-work.slice"); err != nil || got == "" {
-		t.Fatalf("expected a ref and no error, got %q, %v\n%s", got, err, stderr.String())
+	if got, _, err := devimage.Local(devimage.Options{Root: root, Stderr: &stderr}, "crate-work.slice"); err != nil || got == "" {
+		t.Fatalf("expected a tag and no error, got %q, %v\n%s", got, err, stderr.String())
 	}
 	b, err := os.ReadFile(calls)
 	must(t, err)

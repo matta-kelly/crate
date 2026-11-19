@@ -112,6 +112,12 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 		fmt.Fprintf(out, "crate: %v\n", err)
 		return ErrRefused
 	}
+	// The dev image this check runs in goes to the registry by its hash, in the background (cache.go).
+	if decl.Image == "dev" {
+		if err := r.StartCache(); err != nil {
+			fmt.Fprintf(out, "crate: the dev image's push did not start: %v\n", err)
+		}
+	}
 	defer func() {
 		if err := s.Remove(keep); err != nil {
 			fmt.Fprintf(out, "crate: %v\n", err)

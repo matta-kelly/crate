@@ -15,6 +15,7 @@ func init() {
 	register("queue", queueVerb)
 	register("postsubmit", postsubmitVerb)
 	register("ship", shipVerb)
+	register("cache", cacheVerb)
 }
 
 const (
@@ -124,6 +125,22 @@ func shipVerb(args []string) error {
 		return err
 	}
 	if err := r.Ship(os.Stdout); err != nil {
+		return commandExit(1)
+	}
+	return nil
+}
+
+// cacheVerb pushes each dev image this machine holds that is not pushed yet, and the green main's as :main
+// (gate.Cache). Its output is the run's; detached, it goes to <bare>/crate/cache/run.log.
+func cacheVerb(args []string) error {
+	if len(args) != 1 {
+		return usagef("crate cache <bare repo>")
+	}
+	r, err := gate.Open(args[0])
+	if err != nil {
+		return err
+	}
+	if err := r.Cache(os.Stdout); err != nil {
 		return commandExit(1)
 	}
 	return nil
