@@ -185,8 +185,14 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
   the bare repo: `git -C <bare> tag v<version> <commit>`
 - `crate init <bare> [<github url>]`: put the hooks on a bare repo: the install's, by the path crate was run by, so
   through a link to the install (`/usr/local/lib/crate/current`) the hooks follow it to each new version. `crate apply <file|->`: make a server match its
-  declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`). A new repo's main is seeded from GitHub's. crate's own version is
-  its install's
+  declaration (`GIT_HOME`, `GITHUB_BASE`, `REPOS`, `INTAKE`). A new repo's main is seeded from GitHub's. crate's own
+  version is its install's
+- the intake: an update bot (Renovate) proposes each change as a branch on the repo's GitHub copy, and never merges.
+  `INTAKE` names those branches as git refspec sources, a `^` one left out: `INTAKE="refs/heads/renovate/*
+  ^refs/heads/renovate/major-*"`. Each `crate apply` fetches them into `refs/intake/` and enters each head the queue has
+  never held, as a push to `refs/queue/<sha>` would, under the door's rules; the record says `intake`. A head enters
+  once (its change's log is kept), so one that landed or was refused is not checked again, and a new push to the
+  branch is a new head. A branch left out (a major) waits for a person to land it
 
 `hooks/` holds two one-line scripts that run `crate hook <name>` from the install beside them. The queue's state lives
 beside each bare repo, in `<bare>/crate`: `queue.json`, each change's log in `queue/`, the runs' worktrees, the
@@ -232,7 +238,7 @@ ends, and a total line when the run ends. A run is one thing crate does: a check
 a postsubmit, an `up`, a copy to GitHub (mirror) or a release (a version, or an image's publish).
 
 - the files
-  - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror and release of that repo
+  - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror, release and intake of that repo
   - a person: `$XDG_STATE_HOME/crate/log.jsonl` (`~/.local/state` when unset), each `up` of that user
 - the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass` or `fail`),
   `note` (why it failed, or what: the image's `stored`, `pulled` or `built`, a check's changes, a land's main, a

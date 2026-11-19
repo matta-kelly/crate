@@ -141,10 +141,11 @@ func initRepo(bare, github string, out io.Writer, say bool) error {
 }
 
 // applyVerb makes this server match its declaration, KEY=value lines: GIT_HOME, where the bare repos live;
-// GITHUB_BASE, the url each repo's copy goes to, before /<repo>.git; REPOS, the repos. Safe to run again: it inits
-// each repo, seeds a new one's main from GitHub, and starts the worker of a repo whose queue holds changes, so a
-// worker that stopped is started again, and the publish of a green main not yet published, so a failed one is tried
-// again. The binary's own version is its install's.
+// GITHUB_BASE, the url each repo's copy goes to, before /<repo>.git; REPOS, the repos; INTAKE, the branches on each
+// copy whose heads enter the queue (gate.Intake), none when unset. Safe to run again: it inits each repo, seeds a new
+// one's main from GitHub, takes in the intake's new heads, and starts the worker of a repo whose queue holds changes,
+// so a worker that stopped is started again, and the publish of a green main not yet published, so a failed one is
+// tried again. The binary's own version is its install's.
 func applyVerb(args []string) error {
 	if len(args) != 1 {
 		return usagef("%s", applyUsage)
@@ -180,6 +181,10 @@ func applyVerb(args []string) error {
 	if err := os.MkdirAll(gitHome, 0o755); err != nil {
 		return err
 	}
+	intake := strings.Fields(values["INTAKE"])
+	if _, err := gate.IntakeSpecs(intake); err != nil {
+		return usagef("crate apply: %v", err)
+	}
 	failed := false
 	for _, repo := range strings.Fields(values["REPOS"]) {
 		bare := filepath.Join(gitHome, repo+".git")
@@ -188,6 +193,10 @@ func applyVerb(args []string) error {
 		}
 		if exec.Command("git", "-C", bare, "rev-parse", "-q", "--verify", "refs/heads/main").Run() == nil {
 			if r, err := gate.Open(bare); err == nil {
+				if err := r.Intake(intake, os.Stdout); err != nil {
+					fmt.Fprintf(os.Stderr, "crate: %s: %v\n", repo, err)
+					failed = true
+				}
 				if err := r.StartWorker(); err != nil {
 					fmt.Fprintf(os.Stderr, "crate: %s: its worker did not start: %v\n", repo, err)
 					failed = true
