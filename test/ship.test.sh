@@ -81,7 +81,7 @@ SH
 # change: commit a change to the app, and land it.
 change() { echo "$RANDOM" >>note && git add note && git commit -qm "fix: $RANDOM" && land; }
 
-tag_of() { echo "sha-${1:0:7}"; }
+tag_of() { git -C "$tmp/repo.git" rev-list --count --first-parent "$1"; }
 published() { cat "$tmp/repo.git/crate/ship/published" 2>/dev/null; }
 kept_tags() { "$engine" images --filter "reference=$kept" --format '{{.Tag}}' | sort | tr '\n' ' '; }
 in_registry() { curl -fs -o /dev/null -H 'Accept: application/vnd.oci.image.manifest.v1+json' \
@@ -113,8 +113,8 @@ digest=${pin##* }
 if grep -q "crate: landed" <<<"$out" && grep -q "publishes in the background" <<<"$out"; then
   ok "the land says its image publishes in the background, and does not wait for it"
 else not_ok "the land says its image publishes in the background, and does not wait for it" "$out"; fi
-if in_registry o/app "$tag"; then ok "the image is in the registry as sha-<short>"
-else not_ok "the image is in the registry as sha-<short>" "$(cat "$tmp/repo.git/crate/ship/run.log")"; fi
+if in_registry o/app "$tag"; then ok "the image is in the registry as its build number"
+else not_ok "the image is in the registry as its build number" "$(cat "$tmp/repo.git/crate/ship/run.log")"; fi
 if ! in_registry o/app latest; then ok "no latest tag"; else not_ok "no latest tag"; fi
 if [ "$pin" = "shipped $tag $reg/o/app-quadlets $digest" ] && [[ "$digest" == sha256:* ]]; then ok "the pin line names the run files by their digest"
 else not_ok "the pin line names the run files by their digest" "pin: $pin"; fi

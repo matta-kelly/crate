@@ -22,7 +22,7 @@ func TestStampPutsTheTagInEachImageLine(t *testing.T) {
 		{"app.container", []byte("[Container]\nImage=ghcr.io/o/app:VERSION\nExec=serve\n")},
 		{"app-migrate.container", []byte("[Container]\nImage=ghcr.io/o/app:VERSION  \n")},
 		{"app.network", []byte("[Network]\n")},
-	}, "sha-abc1234")
+	}, "412")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,10 +33,10 @@ func TestStampPutsTheTagInEachImageLine(t *testing.T) {
 	if got := strings.Join(names, " "); got != "app-migrate.container app.container app.network" {
 		t.Fatalf("files in order: %s", got)
 	}
-	if got := string(files[1].Data); got != "[Container]\nImage=ghcr.io/o/app:sha-abc1234\nExec=serve\n" {
+	if got := string(files[1].Data); got != "[Container]\nImage=ghcr.io/o/app:412\nExec=serve\n" {
 		t.Fatalf("stamped: %q", got)
 	}
-	if got := string(files[0].Data); got != "[Container]\nImage=ghcr.io/o/app:sha-abc1234\n" {
+	if got := string(files[0].Data); got != "[Container]\nImage=ghcr.io/o/app:412\n" {
 		t.Fatalf("stamped, trailing space: %q", got)
 	}
 }
@@ -48,12 +48,12 @@ func TestStampRefusesAVersionLeftOver(t *testing.T) {
 		"in a file that is no unit": {{"app.container", []byte("Image=x:VERSION\n")}, {"notes.txt", []byte("VERSION\n")}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := Stamp(files, "sha-abc1234"); err == nil || !strings.Contains(err.Error(), "still holds VERSION") {
+			if _, err := Stamp(files, "412"); err == nil || !strings.Contains(err.Error(), "still holds VERSION") {
 				t.Fatalf("expected a refusal that names VERSION, got %v", err)
 			}
 		})
 	}
-	if _, err := Stamp(nil, "sha-1"); err == nil {
+	if _, err := Stamp(nil, "1"); err == nil {
 		t.Fatal("no files: expected a refusal")
 	}
 }
@@ -104,13 +104,13 @@ func TestPackIsTheSameBytesForTheSameFiles(t *testing.T) {
 // test holds the manifest to exactly those fields, and to the rest of the shape the brief names.
 func TestTheManifestIsTheShapeMonkeydoFetches(t *testing.T) {
 	ctx := context.Background()
-	layer, err := Pack([]File{{"app.container", []byte("Image=x:sha-1\n")}})
+	layer, err := Pack([]File{{"app.container", []byte("Image=x:1\n")}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	created := time.Date(2026, 11, 18, 12, 0, 0, 0, time.FixedZone("x", -8*3600))
 	store := memory.New()
-	desc, err := Package(ctx, store, layer, "ghcr.io/o/landl-dash", "https://github.com/o/landl-dash", created, "sha-1")
+	desc, err := Package(ctx, store, layer, "ghcr.io/o/landl-dash", "https://github.com/o/landl-dash", "0123456789abcdef", created, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,11 +165,14 @@ func TestTheManifestIsTheShapeMonkeydoFetches(t *testing.T) {
 	if m.Annotations["org.opencontainers.image.source"] != "https://github.com/o/landl-dash" {
 		t.Errorf("source %q", m.Annotations["org.opencontainers.image.source"])
 	}
+	if m.Annotations["org.opencontainers.image.revision"] != "0123456789abcdef" {
+		t.Errorf("revision %q", m.Annotations["org.opencontainers.image.revision"])
+	}
 	if m.Annotations["org.opencontainers.image.created"] != "2026-11-18T20:00:00Z" {
 		t.Errorf("created %q", m.Annotations["org.opencontainers.image.created"])
 	}
 	// The same commit packs the same manifest.
-	again, err := Package(ctx, memory.New(), layer, "ghcr.io/o/landl-dash", "https://github.com/o/landl-dash", created, "sha-1")
+	again, err := Package(ctx, memory.New(), layer, "ghcr.io/o/landl-dash", "https://github.com/o/landl-dash", "0123456789abcdef", created, "1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,13 +191,13 @@ func TestTheNamesAndThePin(t *testing.T) {
 			t.Errorf("Source(%q) = %q", in, got)
 		}
 	}
-	if Tag("0123456789abcdef") != "sha-0123456" {
-		t.Error(Tag("0123456789abcdef"))
+	if Tag(412) != "412" {
+		t.Error(Tag(412))
 	}
 	if Artifact("ghcr.io/o/x") != "ghcr.io/o/x-quadlets" || ArtifactType("ghcr.io/o/x") != "application/vnd.x.quadlets.v1" {
 		t.Error("artifact names")
 	}
-	if got := Pin("x", "sha-0123456", "ghcr.io/o/x-quadlets", "sha256:ab"); got != "x sha-0123456 ghcr.io/o/x-quadlets sha256:ab" {
+	if got := Pin("x", "412", "ghcr.io/o/x-quadlets", "sha256:ab"); got != "x 412 ghcr.io/o/x-quadlets sha256:ab" {
 		t.Error(got)
 	}
 	if !Plain("localhost:5000/x") || !Plain("127.0.0.1:5000/x") || Plain("ghcr.io/o/x") {

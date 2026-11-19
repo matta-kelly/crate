@@ -1,5 +1,5 @@
 // Package ship publishes a green main's app: the image its check built and ran, and its run files beside it, each
-// named by the commit, so what a node runs is what crate tested. The image goes by podman push; the run files go as an
+// tagged with the main's build number, so what a node runs is what crate tested. The image goes by podman push; the run files go as an
 // OCI artifact, one deterministic tar.gz layer, packed and pushed by oras-go, the library under the oras CLI.
 // The node side of the artifact is monkeydo's (lanes/releases: fetchArtifact, and the unpack in releases.go).
 package ship
@@ -16,6 +16,7 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,15 +35,13 @@ const (
 	LayerTitle     = "quadlets.tar.gz"
 	LayerMediaType = ocispec.MediaTypeImageLayerGzip
 	SourceKey      = "org.opencontainers.image.source"
+	RevisionKey    = "org.opencontainers.image.revision"
 )
 
-// Tag is the tag of a commit's image and run files: sha- and the commit's first seven characters.
-func Tag(commit string) string {
-	if len(commit) > 7 {
-		commit = commit[:7]
-	}
-	return "sha-" + commit
-}
+// Tag is the tag of a main's image and run files: its build number, the count of main's first-parent commits up to
+// it. Main only moves forward, so a later main has a larger number, and an update bot orders the tags as versions.
+// The commit itself is the run files' revision.
+func Tag(build int) string { return strconv.Itoa(build) }
 
 // Artifact is the repository of the run files: the image's, then -quadlets.
 func Artifact(publish string) string { return publish + "-quadlets" }
@@ -146,14 +145,15 @@ type Pushed struct {
 }
 
 // Package packs the artifact in store, and tags it: one layer, the run files, titled LayerTitle; the artifact type
-// from publish; the source; and the commit's time as its created time, so the same commit packs the same manifest.
-func Package(ctx context.Context, store *memory.Store, layer []byte, publish, source string, created time.Time, tag string) (ocispec.Descriptor, error) {
+// from publish; the source; the commit as its revision; and the commit's time as its created time, so the same commit
+// packs the same manifest.
+func Package(ctx context.Context, store *memory.Store, layer []byte, publish, source, revision string, created time.Time, tag string) (ocispec.Descriptor, error) {
 	desc := content.NewDescriptorFromBytes(LayerMediaType, layer)
 	desc.Annotations = map[string]string{ocispec.AnnotationTitle: LayerTitle}
 	if err := store.Push(ctx, desc, bytes.NewReader(layer)); err != nil {
 		return ocispec.Descriptor{}, err
 	}
-	annotations := map[string]string{ocispec.AnnotationCreated: created.UTC().Format(time.RFC3339)}
+	annotations := map[string]string{ocispec.AnnotationCreated: created.UTC().Format(time.RFC3339), RevisionKey: revision}
 	if source != "" {
 		annotations[SourceKey] = source
 	}
@@ -169,13 +169,13 @@ func Package(ctx context.Context, store *memory.Store, layer []byte, publish, so
 
 // PushArtifact packs the run files and pushes them to <publish>-quadlets:tag, with the login for its registry in
 // authfile (podman's auth.json, the same format as docker's config).
-func PushArtifact(ctx context.Context, files []File, publish, source string, created time.Time, tag, authfile string) (Pushed, error) {
+func PushArtifact(ctx context.Context, files []File, publish, source, revision string, created time.Time, tag, authfile string) (Pushed, error) {
 	layer, err := Pack(files)
 	if err != nil {
 		return Pushed{}, err
 	}
 	store := memory.New()
-	desc, err := Package(ctx, store, layer, publish, source, created, tag)
+	desc, err := Package(ctx, store, layer, publish, source, revision, created, tag)
 	if err != nil {
 		return Pushed{}, err
 	}

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"strconv"
 	"strings"
 	"time"
 
@@ -112,11 +113,11 @@ func (r *Repo) shipAll(out io.Writer) (string, error) {
 	}
 }
 
-// publishImage pushes commit's kept image as <publish>:sha-<short>, then its run files, stamped with that tag, as
-// <publish>-quadlets:sha-<short>, and prints and records the pin line a node's releases file takes.
+// publishImage pushes commit's kept image as <publish>:<build>, then its run files, stamped with that tag, as
+// <publish>-quadlets:<build>, and prints and records the pin line a node's releases file takes. The build is the count
+// of main's first-parent commits up to commit (ship.Tag).
 func (r *Repo) publishImage(commit string, decl declaration.Declaration, out io.Writer) error {
 	rec := r.begin("release", "", commit, nil)
-	tag := ship.Tag(commit)
 	authfile := ship.AuthFile()
 	fail := func(step *record.Step, err error) error {
 		step.End(err, "")
@@ -126,6 +127,15 @@ func (r *Repo) publishImage(commit string, decl declaration.Declaration, out io.
 	}
 
 	step := rec.Step(record.Push)
+	count, err := r.git("rev-list", "--count", "--first-parent", commit)
+	if err != nil {
+		return fail(step, err)
+	}
+	build, err := strconv.Atoi(count)
+	if err != nil {
+		return fail(step, fmt.Errorf("the build number of %s: %w", short(commit), err))
+	}
+	tag := ship.Tag(build)
 	if err := ship.Login(authfile); err != nil {
 		return fail(step, err)
 	}
@@ -167,7 +177,7 @@ func (r *Repo) publishImage(commit string, decl declaration.Declaration, out io.
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), limit.Push())
 	defer cancel()
-	pushed, err := ship.PushArtifact(ctx, files, decl.App.Publish, source, when, tag, authfile)
+	pushed, err := ship.PushArtifact(ctx, files, decl.App.Publish, source, commit, when, tag, authfile)
 	if err != nil {
 		return fail(step, fmt.Errorf("the run files' push to %s:%s: %w", ship.Artifact(decl.App.Publish), tag, err))
 	}

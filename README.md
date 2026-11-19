@@ -202,13 +202,17 @@ it, so a node runs what crate tested. Nothing on GitHub builds it again.
   does not ship its image keeps nothing
 - the publish: `crate ship <bare>`, started by each green main beside the copy to GitHub, in its own process, so an
   upload never holds the queue. A land says it started; its output is in `<bare>/crate/ship/run.log`
-  - the image: pushed as `<publish>:sha-<short commit>`. No `latest`
+  - the build number: the count of main's first-parent commits up to the green main. Main only moves forward, so a
+    later main has a larger number, and an update bot (Renovate) orders the tags as versions. The
+    commit is the run files' revision
+  - the image: pushed as `<publish>:<build>`. No `latest`
   - the run files: each file of `quadlets` at the commit, each `Image=` of a `.container` that ends in `:VERSION`
-    stamped with `:sha-<short commit>`. A `VERSION` left after is refused. They are packed as one tar.gz that is the
+    stamped with `:<build>`. A `VERSION` left after is refused. They are packed as one tar.gz that is the
     same bytes for the same files (sorted names, owner 0, time 0), and pushed with oras-go as an OCI artifact,
-    `<publish>-quadlets:sha-<short commit>`: its layer `quadlets.tar.gz` (`application/vnd.oci.image.layer.v1.tar+gzip`),
-    its artifact type `application/vnd.<name>.quadlets.v1`, its source the repo on GitHub, its created time the commit's
-  - the pin line, printed and on the record: `<name> sha-<short> <publish>-quadlets sha256:<manifest digest>`. A node's
+    `<publish>-quadlets:<build>`: its layer `quadlets.tar.gz` (`application/vnd.oci.image.layer.v1.tar+gzip`),
+    its artifact type `application/vnd.<name>.quadlets.v1`, its source the repo on GitHub, its revision the commit,
+    its created time the commit's
+  - the pin line, printed and on the record: `<name> <build> <publish>-quadlets sha256:<manifest digest>`. A node's
     releases file takes it (monkeydo fetches the manifest by that digest and saves the layer by its title)
 - the login: `$XDG_CONFIG_HOME/crate/push-auth.json` (`~/.config` when unset), podman's `auth.json` format, with a
   token that may write the packages. Only the publish reads it; no check, postsubmit or workspace mounts it
