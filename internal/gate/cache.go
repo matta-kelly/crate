@@ -69,9 +69,9 @@ func (r *Repo) StartCache() error {
 	if err := os.MkdirAll(r.state("cache"), 0o755); err != nil {
 		return err
 	}
-	unlock, free := r.tryLock("cache/cache.lock")
-	if !free {
-		return nil
+	unlock, free, err := r.tryLock("cache/cache.lock")
+	if err != nil || !free {
+		return err
 	}
 	unlock()
 	return r.detach("cache/run.log", "cache", r.Bare)

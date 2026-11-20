@@ -167,8 +167,10 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 │   │   kept and crate the committer. A change that does not apply leaves, with the files it conflicts on
 │   ├── the head run passes: main moves to its tip by compare-and-swap, and its changes land. Then postsubmit, when
 │   │   the repo has one; once main is green, the copy to GitHub and the release
-│   └── a run fails: the runs behind it start again without it. Its failure counts once every run ahead has passed;
-│       then a change checked alone leaves, and a batch is checked again in halves until the culprit is alone
+│   ├── a run fails: the runs behind it start again without it. Its failure counts once every run ahead has passed;
+│   │   then a change checked alone leaves, and a batch is checked again in halves until the culprit is alone
+│   └── a run errs: crate could not check it, so it decides nothing. Its changes stay at the front, unsplit, and
+│       are checked again (see whose fault, below)
 └── the verdict: the push waits, printing its change's output until its last line,
     `crate: landed <sha> as <main>` or `crate: not landed: <why>`; `git push -o crate.wait=no` returns once queued.
     A change that lands is kept as refs/landed/<sha>, at the main commit it landed as: the verdict a client reads
@@ -185,6 +187,19 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
 - `crate queue <bare>`: the queue, each change's place and what it is doing. `crate queue <bare> jump <sha>`: the
   change goes first, checked alone, and every run starts again behind it
 - a worker that stopped starts again with the next push, the next wait, or `crate apply`
+- whose fault: a run ends in pass, fail or error (`internal/fault`). A fail is the change's own: its crate.toml or
+  services file, its dev image's build or smoke, its setup, its app's build, needs proof or health, its check.sh's
+  exit, its check past `timeout`, a conflict. Anything else is an error: crate's machine failed (podman, a pull, the
+  network, a slot, a tree, the cache). Only the change's own failures are marked, so a failure nobody marked is never
+  blamed on a change
+  - an error rejects nothing and splits nothing: the run's changes stay at the front and are checked again, and each
+    change's log says why it waits. A change with 3 errors of its own, on a machine that is not paused, leaves with
+    `crate: not landed: error: crate could not check it 3 times (<why>); land it again`
+  - the pause: the machine counts errors in a row, for all its repos (`$XDG_STATE_HOME/crate/health.json`). The 3rd
+    pauses it: no run starts, the workers stop, `crate land` and `crate queue` say why. A pass sets the count back.
+    Each `crate apply` probes a paused machine (`podman info`, `podman images`, a network made and removed); when the
+    probe passes, the machine is well again and the workers start
+  - postsubmit that errs neither reverts nor goes green: `crate apply` runs it again, up to 3 times
 - postsubmit: the slow sets, in a workspace of kind postsubmit, after main moves, one run at a time. Red puts a revert
   to the last green main first in the queue
 - green: a main that passed every set it has, the gate's and postsubmit's. A repo with no postsubmit is green as it
@@ -257,9 +272,11 @@ a postsubmit, an `up`, a copy to GitHub (mirror), a release (a version, or an im
   - a person: `$XDG_STATE_HOME/crate/log.jsonl` (`~/.local/state` when unset), each `up` of that user
 - the journal: on the server, each line of the queue's record is also one journal entry, `SYSLOG_IDENTIFIER=crate`,
   the JSON line its message, so the node's log shipper carries it. A person's record stays in its file
-- the queue line: `crate apply` prints `crate: queue repo=<repo> depth=<changes> oldest=<seconds>` for each repo
-  whose queue holds a change, so a queue that stops moving shows as a wait that grows in the server's log
-- the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass` or `fail`),
+- the queue line: `crate apply` prints `crate: queue repo=<repo> depth=<changes> oldest=<seconds> worker=<what>` for
+  each repo whose queue holds a change, so a queue that stops moving shows as a wait that grows in the server's log.
+  `worker` is what apply did for it: `started`, `running` (one runs), `paused` (the machine is paused) or `error` (it
+  could not tell, with the error on its own line); never nothing
+- the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass`, `fail`, or `error` for a run crate could not do),
   `note` (why it failed, or what: the image's `stored`, `pulled` or `built`, a check's changes, a land's main, a
   version, the revert, a publish's pin line)
 - the steps, in order; a step that does not run writes no line

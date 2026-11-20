@@ -19,6 +19,7 @@ package gate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -121,10 +122,17 @@ func (r *Repo) begin(kind, system, commit string, out io.Writer) *record.Run {
 // lock takes the lock file name, waiting for it. The lock is freed when the process ends, or by the func it gives.
 func (r *Repo) lock(name string) (func(), error) { return r.flock(name, syscall.LOCK_EX) }
 
-// tryLock takes the lock file name when it is free, and says whether it took it.
-func (r *Repo) tryLock(name string) (func(), bool) {
+// tryLock takes the lock file name when it is free, and says whether it took it. A lock it cannot open or take for
+// any reason but another holder is an error, never "held".
+func (r *Repo) tryLock(name string) (func(), bool, error) {
 	unlock, err := r.flock(name, syscall.LOCK_EX|syscall.LOCK_NB)
-	return unlock, err == nil
+	if errors.Is(err, syscall.EWOULDBLOCK) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("the lock %s: %w", r.state(name), err)
+	}
+	return unlock, true, nil
 }
 
 func (r *Repo) flock(name string, how int) (func(), error) {

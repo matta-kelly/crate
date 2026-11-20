@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/matta-kelly/crate/internal/declaration"
+	"github.com/matta-kelly/crate/internal/fault"
 )
 
 const registry = "ghcr.io/matta-kelly/"
@@ -45,16 +46,16 @@ func open(o Options) (*plan, error) {
 	}
 	dev := decl.Dev
 	if decl.Name == "" {
-		return nil, fmt.Errorf("crate.toml at %s needs name: the repo's name, which names its dev image", p.rev)
+		return nil, fault.Change(fmt.Errorf("crate.toml at %s needs name: the repo's name, which names its dev image", p.rev))
 	}
 	if len(dev.Inputs) == 0 {
-		return nil, fmt.Errorf("crate.toml at %s needs [dev] inputs: the files the dev image's hash covers", p.rev)
+		return nil, fault.Change(fmt.Errorf("crate.toml at %s needs [dev] inputs: the files the dev image's hash covers", p.rev))
 	}
 	p.inputs = dev.Inputs
 	p.containerfile = orDefault(dev.Containerfile, defaultContainerfile)
 	p.setup = decl.Tools.Setup
 	if !slices.Contains(p.inputs, p.containerfile) {
-		return nil, fmt.Errorf("[dev] inputs lack the Containerfile %s: the hash must cover what the build reads", p.containerfile)
+		return nil, fault.Change(fmt.Errorf("[dev] inputs lack the Containerfile %s: the hash must cover what the build reads", p.containerfile))
 	}
 	if p.image, err = p.imageName(decl); err != nil {
 		return nil, err
@@ -70,6 +71,7 @@ func orDefault[T string | []string](v, fallback T) T {
 }
 
 // declaration reads crate.toml from the commit's tree. A commit with none gives an empty one, which open refuses.
+// What the change declares wrong is its own fault; a git that fails is not.
 func (p *plan) declaration() (declaration.Declaration, error) {
 	listed, err := git(p.root, "ls-tree", p.rev, "--", "crate.toml")
 	if err != nil {
@@ -82,14 +84,18 @@ func (p *plan) declaration() (declaration.Declaration, error) {
 	if err != nil {
 		return declaration.Declaration{}, err
 	}
-	return declaration.Parse([]byte(text))
+	decl, err := declaration.Parse([]byte(text))
+	if err != nil {
+		return declaration.Declaration{}, fault.Change(err)
+	}
+	return decl, nil
 }
 
 // imageName is [dev] image when the repo names one, else ghcr.io/matta-kelly/<name>-dev.
 func (p *plan) imageName(decl declaration.Declaration) (string, error) {
 	if image := decl.Dev.Image; image != "" {
 		if strings.Contains(path.Base(image), ":") {
-			return "", fmt.Errorf("[dev] image %s: expected a name with no tag", image)
+			return "", fault.Change(fmt.Errorf("[dev] image %s: expected a name with no tag", image))
 		}
 		return image, nil
 	}
@@ -105,7 +111,7 @@ func (p *plan) hash() (string, error) {
 			return "", err
 		}
 		if entry == "" {
-			return "", fmt.Errorf("no %s at %s", in, p.rev)
+			return "", fault.Change(fmt.Errorf("[dev] inputs: no %s at %s", in, p.rev))
 		}
 	}
 	entries, err := git(p.root, append([]string{"ls-tree", "-r", p.rev, "--"}, p.inputs...)...)

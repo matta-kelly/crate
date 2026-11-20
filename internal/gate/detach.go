@@ -14,10 +14,19 @@ import (
 	"github.com/matta-kelly/crate/internal/process"
 )
 
-// StartWorker starts the repo's worker, crate queue run <bare>, when changes wait and none runs. Its output goes to
-// worker.log. It also starts the publish of a green main not yet published (StartShip) and the dev image cache's
-// pending work (StartCache), after the worker, so neither, when it cannot start, ever holds the queue.
-func (r *Repo) StartWorker() error {
+// What StartWorker did for the worker.
+const (
+	WorkerIdle    = "idle"    // no change waits
+	WorkerStarted = "started" // it started one
+	WorkerRunning = "running" // one runs already
+	WorkerPaused  = "paused"  // the machine is paused: none starts until crate apply finds it well
+)
+
+// StartWorker starts the repo's worker, crate queue run <bare>, when changes wait, none runs and the machine is not
+// paused, and says which it found. Its output goes to worker.log. It also starts the publish of a green main not yet
+// published (StartShip), the dev image cache's pending work (StartCache), and a postsubmit that crate could not run
+// (startRetry), so none of them, when it cannot start, ever holds the queue.
+func (r *Repo) StartWorker() (string, error) {
 	var ship, cache error
 	if err := r.StartShip(); err != nil {
 		ship = fmt.Errorf("the publish did not start: %w", err)
@@ -25,23 +34,42 @@ func (r *Repo) StartWorker() error {
 	if err := r.StartCache(); err != nil {
 		cache = fmt.Errorf("the dev image cache did not start: %w", err)
 	}
+	var retry error
+	if err := r.startRetry(); err != nil {
+		retry = fmt.Errorf("the postsubmit to run again did not start: %w", err)
+	}
+	state, err := r.startWorker()
 	var worker error
-	if err := r.startWorker(); err != nil {
+	if err != nil {
 		worker = fmt.Errorf("its worker did not start: %w", err)
 	}
-	return errors.Join(worker, ship, cache)
+	return state, errors.Join(worker, ship, cache, retry)
 }
 
-func (r *Repo) startWorker() error {
-	if q, err := r.readQueue(); err != nil || len(q) == 0 {
-		return err
+func (r *Repo) startWorker() (string, error) {
+	q, err := r.readQueue()
+	if err != nil {
+		return "", err
 	}
-	unlock, free := r.tryLock("worker.lock")
+	if len(q) == 0 {
+		return WorkerIdle, nil
+	}
+	h, err := machine.ReadHealth()
+	if err != nil {
+		return "", err
+	}
+	if h.Paused != "" {
+		return WorkerPaused, nil
+	}
+	unlock, free, err := r.tryLock("worker.lock")
+	if err != nil {
+		return "", err
+	}
 	if !free {
-		return nil
+		return WorkerRunning, nil
 	}
 	unlock()
-	return r.detach("worker.log", "queue", r.Bare, "run")
+	return WorkerStarted, r.detach("worker.log", "queue", r.Bare, "run")
 }
 
 // startPostsubmit starts crate postsubmit <bare>. Its output goes to postsubmit/run.log.

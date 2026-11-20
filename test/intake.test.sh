@@ -4,6 +4,7 @@
 set -uo pipefail
 root=${CRATE_ROOT:-$(dirname "$(dirname "$(readlink -f "$0")")")}  # the install to test: the built layout
 tmp=$(mktemp -d)
+export XDG_STATE_HOME="$tmp/.state" # crate's machine state is the suite's own
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 trap 'pkill -f "crate (queue|postsubmit|ship) $tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
 failed=0

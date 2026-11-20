@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
+	"github.com/matta-kelly/crate/internal/fault"
+	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/record"
 	"github.com/matta-kelly/crate/internal/system"
 )
@@ -73,8 +76,22 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 	if err == nil {
 		rec.End(record.Pass, "")
 		logFile.Close()
+		if err := machine.Passed(); err != nil {
+			fmt.Fprintf(out, "crate: the machine's health: %v\n", err)
+		}
 		r.green(main, out)
 		return nil
+	}
+	if !fault.IsChange(err) {
+		// crate could not run it: no revert, and main is not green. It runs again (startRetry).
+		why := firstLine(err)
+		rec.End(record.Error, why)
+		logFile.Close()
+		if _, herr := machine.Erred(why); herr != nil {
+			fmt.Fprintf(out, "crate: the machine's health: %v\n", herr)
+		}
+		r.retryLater(main, out)
+		return err
 	}
 	if green == "" {
 		rec.End(record.Fail, "not reverted: no green main to go back to")
@@ -97,7 +114,56 @@ func (r *Repo) Postsubmit(out io.Writer) error {
 // green keeps commit as the last green main, then publishes it.
 func (r *Repo) green(commit string, out io.Writer) {
 	_ = os.WriteFile(r.state("postsubmit", "green"), []byte(commit+"\n"), 0o644)
+	_ = os.Remove(r.state("postsubmit", "retry"))
 	r.publish(commit, out)
+}
+
+// retryLater keeps main as the postsubmit to run again, and how many times crate could not run it. At
+// machine.PauseAfter it gives up: the next main that lands runs postsubmit again.
+func (r *Repo) retryLater(main string, out io.Writer) {
+	sha, count := r.retry()
+	if sha != main {
+		count = 0
+	}
+	count++
+	if count >= machine.PauseAfter {
+		_ = os.Remove(r.state("postsubmit", "retry"))
+		fmt.Fprintf(out, "crate: crate could not run postsubmit on %s %d times; the next main that lands runs it\n", short(main), count)
+		return
+	}
+	_ = os.WriteFile(r.state("postsubmit", "retry"), []byte(fmt.Sprintf("%s %d\n", main, count)), 0o644)
+}
+
+// retry is the postsubmit to run again and its count of errors; "" for none.
+func (r *Repo) retry() (string, int) {
+	data, err := os.ReadFile(r.state("postsubmit", "retry"))
+	if err != nil {
+		return "", 0
+	}
+	sha, n, _ := strings.Cut(strings.TrimSpace(string(data)), " ")
+	count, _ := strconv.Atoi(n)
+	return sha, count
+}
+
+// startRetry starts the postsubmit that crate could not run, when it is still main, the machine is not paused and no
+// postsubmit runs. A main that moved on starts its own.
+func (r *Repo) startRetry() error {
+	sha, _ := r.retry()
+	if sha == "" {
+		return nil
+	}
+	if sha != r.main() {
+		return os.Remove(r.state("postsubmit", "retry"))
+	}
+	if paused() {
+		return nil
+	}
+	unlock, free, err := r.tryLock("postsubmit.lock")
+	if err != nil || !free {
+		return err
+	}
+	unlock()
+	return r.startPostsubmit()
 }
 
 // revert makes one commit on main as it stands that undoes green..red, with the failure's last lines in its message
@@ -130,7 +196,8 @@ func (r *Repo) revert(green, red, path string) (string, error) {
 	if _, err := r.Enter(sha, true); err != nil {
 		return "", err
 	}
-	return sha, r.StartWorker()
+	_, err = r.StartWorker()
+	return sha, err
 }
 
 func tail(path string, n int) string {

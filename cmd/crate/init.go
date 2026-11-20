@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/matta-kelly/crate/internal/gate"
+	"github.com/matta-kelly/crate/internal/machine"
 )
 
 func init() {
@@ -189,6 +191,20 @@ func applyVerb(args []string) error {
 		return usagef("crate apply: %v", err)
 	}
 	failed := false
+	// A paused machine starts no check until its probe passes (internal/machine/health.go).
+	if h, err := machine.ReadHealth(); err != nil {
+		fmt.Fprintf(os.Stderr, "crate: the machine's health: %v\n", err)
+		failed = true
+	} else if h.Paused != "" {
+		if err := machine.Probe(context.Background()); err != nil {
+			fmt.Printf("crate: the machine stays paused (since %s: %s); its probe: %v\n", h.Since.Format(time.RFC3339), h.Paused, err)
+		} else if err := machine.Passed(); err != nil {
+			fmt.Fprintf(os.Stderr, "crate: the machine's health: %v\n", err)
+			failed = true
+		} else {
+			fmt.Printf("crate: the machine is well again: its probe passed (it paused on: %s)\n", h.Paused)
+		}
+	}
 	for _, repo := range strings.Fields(values["REPOS"]) {
 		bare := filepath.Join(gitHome, repo+".git")
 		if err := initRepo(bare, base+"/"+repo+".git", os.Stdout, false); err != nil {
@@ -200,12 +216,16 @@ func applyVerb(args []string) error {
 					fmt.Fprintf(os.Stderr, "crate: %s: %v\n", repo, err)
 					failed = true
 				}
-				if err := r.StartWorker(); err != nil {
+				state, err := r.StartWorker()
+				if err != nil {
 					fmt.Fprintf(os.Stderr, "crate: %s: %v\n", repo, err)
 					failed = true
 				}
+				if state == "" {
+					state = "error"
+				}
 				if depth, oldest, err := r.Waiting(time.Now()); err == nil && depth > 0 {
-					fmt.Printf("crate: queue repo=%s depth=%d oldest=%d\n", repo, depth, int(oldest.Seconds()))
+					fmt.Printf("crate: queue repo=%s depth=%d oldest=%d worker=%s\n", repo, depth, int(oldest.Seconds()), state)
 				}
 			}
 			continue

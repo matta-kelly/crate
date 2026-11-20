@@ -1,11 +1,13 @@
 package gate
 
-// The worker on real git with a stand-in check: a tree fails when it holds a file named red, and a file named slow
-// makes its check take a while. Each case is a path through the queue.
+// The worker on real git with a stand-in check: a tree fails when it holds a file named red, a file named slow makes
+// its check take a while, and a file named sick makes crate unable to check it (an error, not a fail) while the
+// fixture's sick count lasts, or for ever when lonely is set. Each case is a path through the queue.
 
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/matta-kelly/crate/internal/fault"
+	"github.com/matta-kelly/crate/internal/machine"
 )
 
 type fixture struct {
@@ -24,12 +29,15 @@ type fixture struct {
 	out    bytes.Buffer
 
 	running, most atomic.Int32
+	sick          atomic.Int32 // how many more checks of a sick tree crate cannot do
+	lonely        bool         // a sick tree errs for ever, on a machine that is otherwise well
 	mu            sync.Mutex
 	checked       []string // each run's changes, as their subjects, in the order the runs started
 }
 
 func newFixture(t *testing.T, decl string) *fixture {
 	t.Helper()
+	t.Setenv("XDG_STATE_HOME", t.TempDir()) // the machine's health is the test's own
 	dir := t.TempDir()
 	f := &fixture{t: t, client: filepath.Join(dir, "client")}
 	bare := filepath.Join(dir, "repo.git")
@@ -105,7 +113,16 @@ func (f *fixture) check(ctx context.Context, rn *run) error {
 		time.Sleep(200 * time.Millisecond)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "red")); err == nil {
-		return ErrRefused
+		return fault.Change(ErrRefused)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "sick")); err == nil {
+		if f.lonely {
+			_ = machine.Passed() // the rest of the machine passes between its runs
+			return errors.New("podman exec exited 125: podman could not run scripts/check.sh")
+		}
+		if f.sick.Add(-1) >= 0 {
+			return errors.New("podman images did not finish within 30s")
+		}
 	}
 	return nil
 }
@@ -314,4 +331,85 @@ func TestMainMovedUnderTheQueueStartsAgain(t *testing.T) {
 	if got := f.landed(); got != "other,a" {
 		t.Errorf("main: expected other then a, got %q", got)
 	}
+}
+
+// A run that crate could not check decides nothing: its change stays, unsplit, is checked again, and lands once crate
+// can check it. Its log says it waits.
+func TestAnErrorKeepsTheChangeQueuedAndUnsplitAndItLandsLater(t *testing.T) {
+	f := newFixture(t, "batch = 2\n")
+	f.sick.Store(1)
+	a := f.change("a", map[string]string{"a": "a\n", "sick": "x\n"})
+	b := f.change("b", map[string]string{"b": "b\n"})
+	f.work(1)
+	if got := f.landed(); got != "a,b" {
+		t.Errorf("main: expected a then b, got %q", got)
+	}
+	if len(f.checked) != 2 || f.checked[0] != "a,b" || f.checked[1] != "a,b" {
+		t.Errorf("expected the batch checked twice, whole, got %q", f.checked)
+	}
+	log, _ := os.ReadFile(f.repo.entryLog(a))
+	if !strings.Contains(string(log), "crate could not check it (podman images did not finish within 30s); it waits") {
+		t.Errorf("expected a's log to say it waits, got:\n%s", log)
+	}
+	if !strings.HasPrefix(f.verdict(a), landedPrefix) || !strings.HasPrefix(f.verdict(b), landedPrefix) {
+		t.Errorf("verdicts: %q, %q", f.verdict(a), f.verdict(b))
+	}
+	if h, _ := machine.ReadHealth(); h.Errors != 0 || h.Paused != "" {
+		t.Errorf("expected the pass to set the machine's health back, got %+v", h)
+	}
+	f.empty()
+}
+
+// Errors in a row pause the machine: the worker stops, no change leaves, and the next worker starts none. Once the
+// machine is well (the probe passed), the changes land.
+func TestErrorsInARowPauseTheMachineAndNothingIsRefused(t *testing.T) {
+	f := newFixture(t, "batch = 1\n")
+	f.sick.Store(100)
+	a := f.change("a", map[string]string{"a": "a\n", "sick": "x\n"})
+	f.change("b", map[string]string{"b": "b\n"})
+	f.work(1)
+	h, _ := machine.ReadHealth()
+	if h.Paused != "podman images did not finish within 30s" {
+		t.Fatalf("expected the machine paused on the error, got %+v", h)
+	}
+	if len(f.checked) != machine.PauseAfter {
+		t.Errorf("expected %d checks before the pause, got %q", machine.PauseAfter, f.checked)
+	}
+	q, _ := f.repo.readQueue()
+	if len(q) != 2 || q[0].Sha != a || q[0].Errors != machine.PauseAfter {
+		t.Fatalf("expected both changes still queued, a first with %d errors, got %+v", machine.PauseAfter, q)
+	}
+	if state, err := f.repo.startWorker(); err != nil || state != WorkerPaused {
+		t.Errorf("expected no worker to start on a paused machine, got %q, %v", state, err)
+	}
+	f.sick.Store(0)
+	if err := machine.Passed(); err != nil {
+		t.Fatal(err)
+	}
+	f.work(1)
+	if got := f.landed(); got != "a,b" {
+		t.Errorf("main: expected a then b once the machine is well, got %q", got)
+	}
+	f.empty()
+}
+
+// A change that crate cannot check, on a machine that checks the rest, leaves after PauseAfter errors with the
+// verdict error, which asks its pusher to land it again; the change behind it lands.
+func TestAChangeThatErrsAloneLeavesWithTheVerdictError(t *testing.T) {
+	f := newFixture(t, "batch = 1\n")
+	f.lonely = true
+	a := f.change("a", map[string]string{"a": "a\n", "sick": "x\n"})
+	f.change("b", map[string]string{"b": "b\n"})
+	f.work(1)
+	if got := f.landed(); got != "b" {
+		t.Errorf("main: expected b alone, got %q", got)
+	}
+	want := notLandedPrefix + "error: crate could not check it 3 times (podman exec exited 125: podman could not run scripts/check.sh); land it again"
+	if got := f.verdict(a); got != want {
+		t.Errorf("a's verdict:\n got %q\nwant %q", got, want)
+	}
+	if h, _ := machine.ReadHealth(); h.Paused != "" {
+		t.Errorf("expected the machine not paused, got %+v", h)
+	}
+	f.empty()
 }

@@ -14,6 +14,7 @@ import (
 
 	"github.com/matta-kelly/crate/internal/declaration"
 	"github.com/matta-kelly/crate/internal/devimage"
+	"github.com/matta-kelly/crate/internal/fault"
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
@@ -140,7 +141,7 @@ func (s *System) Up(ctx context.Context) (err error) {
 	}
 	folders, err := decl.Tools.Folders()
 	if err != nil {
-		return err
+		return fault.Change(err)
 	}
 	if s.spec.Kind == Attempt {
 		made, err := s.Made()
@@ -509,7 +510,7 @@ func (s *System) setup(ctx context.Context, command string) error {
 		return fmt.Errorf("up: ran past its limit at setup: %w", ctx.Err())
 	}
 	if err != nil {
-		return fmt.Errorf("setup: %s: %w", strings.TrimSpace(out), err)
+		return fault.Own(fmt.Errorf("setup: %s: %w", strings.TrimSpace(out), err))
 	}
 	return nil
 }
@@ -522,18 +523,18 @@ func (s *System) read() (declaration.Declaration, []Service, error) {
 	}
 	decl, err := declaration.Parse(data)
 	if err != nil {
-		return declaration.Declaration{}, nil, err
+		return declaration.Declaration{}, nil, fault.Change(err)
 	}
 	if decl.Services == "" {
 		return decl, nil, nil
 	}
 	services, err := os.ReadFile(filepath.Join(s.spec.Checkout, decl.Services))
 	if err != nil {
-		return declaration.Declaration{}, nil, fmt.Errorf("services file %s: %w", decl.Services, err)
+		return declaration.Declaration{}, nil, fault.Change(fmt.Errorf("services file %s: %w", decl.Services, err))
 	}
 	rendered, err := ServicesOf(services, s.spec.Name)
 	if err != nil {
-		return declaration.Declaration{}, nil, err
+		return declaration.Declaration{}, nil, fault.Change(err)
 	}
 	return decl, rendered, nil
 }

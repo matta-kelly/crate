@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/record"
 )
 
@@ -26,6 +27,7 @@ type Entry struct {
 	Started time.Time `json:"started,omitzero"` // when a run first took it
 	Limit   int       `json:"limit,omitempty"`  // the most changes it may be checked with, after a bisect; 0 for the repo's batch
 	Slot    *int      `json:"slot,omitempty"`   // the run checking it now; none while it waits
+	Errors  int       `json:"errors,omitempty"` // the runs of it that crate could not check (an error, not a fail)
 }
 
 // The two shapes of a change's last line: its verdict.
@@ -146,8 +148,12 @@ func (r *Repo) Leave(sha, why string) error {
 // verdict ends a change: landed as the main commit as, or not landed for why when as is "". Its last line, its ref
 // gone (refs/landed/<sha> at as when it landed, first, so a client never sees neither), and its land run on the
 // record: the wait from entering to its first run, and the whole of it.
-func (r *Repo) verdict(e Entry, as, why string) {
-	line, result, text := notLandedPrefix+why, record.Fail, why
+func (r *Repo) verdict(e Entry, as, why string) { r.verdictAs(e, as, why, record.Fail) }
+
+// verdictAs is verdict with the result a change that does not land records: a fail, or an error when crate could not
+// check it.
+func (r *Repo) verdictAs(e Entry, as, why, failed string) {
+	line, result, text := notLandedPrefix+why, failed, why
 	if as != "" {
 		_, _ = r.git("update-ref", landedRef(e.Sha), as)
 		line, result, text = landedPrefix+short(e.Sha)+" as "+short(as), record.Pass, short(as)
@@ -173,6 +179,7 @@ func (r *Repo) Wait(sha string, out io.Writer) (bool, error) {
 	read := bufio.NewReader(f)
 	var partial strings.Builder
 	checked := time.Now()
+	var told time.Time // the pause Wait last told of
 	for {
 		chunk, err := read.ReadString('\n')
 		partial.WriteString(chunk)
@@ -193,8 +200,15 @@ func (r *Repo) Wait(sha string, out io.Writer) (bool, error) {
 		}
 		if time.Since(checked) > 5*time.Second {
 			checked = time.Now()
-			if err := r.StartWorker(); err != nil {
+			state, err := r.StartWorker()
+			if err != nil {
 				return false, err
+			}
+			if state == WorkerPaused {
+				if h, err := machine.ReadHealth(); err == nil && h.Paused != "" && !h.Since.Equal(told) {
+					told = h.Since
+					fmt.Fprintf(out, "crate: the machine is paused: %s. Your change waits, and is checked when crate apply finds the machine well\n", h.Paused)
+				}
 			}
 		}
 		time.Sleep(200 * time.Millisecond)
@@ -206,6 +220,9 @@ func (r *Repo) Queue(out io.Writer) error {
 	q, err := r.readQueue()
 	if err != nil {
 		return err
+	}
+	if h, err := machine.ReadHealth(); err == nil && h.Paused != "" {
+		fmt.Fprintf(out, "the machine is paused since %s: %s\n", since(h.Since), h.Paused)
 	}
 	if len(q) == 0 {
 		fmt.Fprintln(out, "the queue is empty")

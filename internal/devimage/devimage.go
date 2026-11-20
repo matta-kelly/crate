@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/matta-kelly/crate/internal/fault"
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/process"
@@ -195,7 +196,7 @@ func (p *plan) buildTo(tag string, placement machine.Placement) error {
 	}
 	build = append(build, "-f", p.containerfile, "-t", candidate, ".")
 	if err := p.podmanIn(placement, "podman build", limit.Build(), p.stderr, build...); err != nil {
-		return err
+		return fault.Own(err)
 	}
 	if p.setup != "" {
 		tree, err := git(p.root, "archive", p.rev)
@@ -210,7 +211,7 @@ func (p *plan) buildTo(tag string, placement machine.Placement) error {
 		args = append(args, candidate, "sh", "-c", smoke)
 		if err := run(p.ctx, call{name: "the smoke ([tools] setup with no network)", limit: limit.Smoke(), dir: p.root, prog: "podman",
 			args: args, stdin: strings.NewReader(tree), in: placement}, p.stderr, p.stderr); err != nil {
-			return err
+			return fault.Own(err)
 		}
 	}
 	return p.podman("podman tag", limit.Podman(), p.stderr, "tag", candidate, tag)

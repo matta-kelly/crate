@@ -9,13 +9,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/matta-kelly/crate/internal/fault"
 	"github.com/matta-kelly/crate/internal/machine"
+	"github.com/matta-kelly/crate/internal/record"
 )
 
 // The worker: the one process per repo that checks the queue's changes and moves main. It keeps a window of runs,
 // as many as the machine checks at once, each on its own slot. Run n's tree is run n-1's tip and its own changes on
 // top, so the runs check side by side what main will be, in order. The head run that passes moves main to its tip;
 // a run that fails is decided once every run ahead of it has passed, and the runs behind it start again without it.
+// A run that crate could not check (an error: its machine failed, not the change) decides nothing: its changes stay
+// at the front and are checked again. The machine counts its errors in a row and pauses at machine.PauseAfter, and
+// while it is paused the worker starts no run, and stops once its runs under way have ended.
 
 // run is one check of a batch of changes, on the tree of base and those changes.
 type run struct {
@@ -50,9 +55,9 @@ func (r *Repo) Work(out io.Writer) error {
 }
 
 func (r *Repo) work(window int, check checker, out io.Writer) error {
-	unlock, ok := r.tryLock("worker.lock")
-	if !ok {
-		return nil
+	unlock, ok, err := r.tryLock("worker.lock")
+	if err != nil || !ok {
+		return err
 	}
 	w := &worker{r: r, window: max(window, 1), check: check, busy: make([]bool, max(window, 1)),
 		results: make(chan *run), out: out}
@@ -60,13 +65,19 @@ func (r *Repo) work(window int, check checker, out io.Writer) error {
 		w.loop()
 		unlock()
 		// A change that entered as the loop ended finds no worker: look once more, after the lock is free.
-		if q, err := r.readQueue(); err != nil || len(q) == 0 {
+		if q, err := r.readQueue(); err != nil || len(q) == 0 || paused() {
 			return err
 		}
-		if unlock, ok = r.tryLock("worker.lock"); !ok {
-			return nil
+		if unlock, ok, err = r.tryLock("worker.lock"); err != nil || !ok {
+			return err
 		}
 	}
+}
+
+// paused says the machine is paused; a health it cannot read is not a pause, so a worker never stops on it.
+func paused() bool {
+	h, err := machine.ReadHealth()
+	return err == nil && h.Paused != ""
 }
 
 func (w *worker) loop() {
@@ -81,9 +92,16 @@ func (w *worker) loop() {
 			if w.settle() {
 				continue
 			}
-			w.fill(q)
+			// A paused machine starts no run; a run under way ends as it ends, and a pass ends the pause.
+			stop := paused()
+			if !stop {
+				w.fill(q)
+			}
 			w.mark()
-			if len(w.runs) == 0 && len(q) == 0 && !slices.Contains(w.busy, true) {
+			if len(w.runs) == 0 && (len(q) == 0 || stop) && !slices.Contains(w.busy, true) {
+				if stop && len(q) > 0 {
+					fmt.Fprintln(w.out, "crate: the machine is paused; the worker stops, and crate apply starts it when the machine is well")
+				}
 				return
 			}
 		}
@@ -110,16 +128,24 @@ func (w *worker) align(q []Entry) {
 	}
 }
 
-// settle decides the head run while it is done: a pass moves main and lands its changes, a fail ejects or bisects.
-// It says whether the queue changed.
+// settle decides the head run while it is done: a pass moves main and lands its changes, a fail ejects or bisects,
+// and an error keeps its changes at the front, to be checked again. It says whether the queue changed.
 func (w *worker) settle() bool {
 	changed := false
 	for len(w.runs) > 0 && w.runs[0].done {
 		head := w.runs[0]
 		if head.err != nil {
-			w.cancel(0, "a run ahead of it failed")
-			w.fail(head)
+			if fault.IsChange(head.err) {
+				w.cancel(0, "a run ahead of it failed")
+				w.fail(head)
+			} else {
+				w.cancel(0, "crate could not check a run ahead of it")
+				w.erred(head.shas(), head.err)
+			}
 			return true
+		}
+		if err := machine.Passed(); err != nil {
+			fmt.Fprintf(w.out, "crate: the machine's health: %v\n", err)
 		}
 		landed, err := w.r.land(head)
 		if err != nil {
@@ -190,6 +216,44 @@ func (w *worker) fail(rn *run) {
 	}
 }
 
+// erred is a run that crate could not check. Its changes stay in the queue, unsplit, and are checked again, and the
+// machine counts the error. A change with machine.PauseAfter errors of its own, on a machine that is not paused,
+// leaves with the verdict error: it is the one that crate cannot check, so its pusher lands it again.
+func (w *worker) erred(shas []string, err error) {
+	why := firstLine(err)
+	h, herr := machine.Erred(why)
+	if herr != nil {
+		fmt.Fprintf(w.out, "crate: the machine's health: %v\n", herr)
+	}
+	fmt.Fprintf(w.out, "crate: crate could not check %s: %s\n", strings.Join(shorts(shas), " "), why)
+	var out []Entry
+	_ = w.r.changeQueue(func(q []Entry) ([]Entry, error) {
+		for i := range q {
+			if slices.Contains(shas, q[i].Sha) {
+				q[i].Errors++
+				if q[i].Errors >= machine.PauseAfter && h.Paused == "" {
+					out = append(out, q[i])
+				}
+			}
+		}
+		return slices.DeleteFunc(q, func(e Entry) bool { return slices.ContainsFunc(out, func(o Entry) bool { return o.Sha == e.Sha }) }), nil
+	})
+	for _, sha := range shas {
+		if !slices.ContainsFunc(out, func(e Entry) bool { return e.Sha == sha }) {
+			appendTo(w.r.entryLog(sha), "crate: crate could not check it ("+why+"); it waits, and is checked again")
+		}
+	}
+	for _, e := range out {
+		w.r.verdictAs(e, "", fmt.Sprintf("error: crate could not check it %d times (%s); land it again", e.Errors, why), record.Error)
+	}
+}
+
+// firstLine is an error's first line: the note a record and a log line take.
+func firstLine(err error) string {
+	text, _, _ := strings.Cut(err.Error(), "\n")
+	return text
+}
+
 // fill starts runs on free slots while the window has room and changes wait, each on the tip of the run ahead.
 func (w *worker) fill(q []Entry) {
 	at := 0
@@ -221,10 +285,8 @@ func (w *worker) fill(q []Entry) {
 			tip, in, out, err = w.r.build(dir, base, take)
 		}
 		if err != nil {
-			for _, e := range w.take(shasOf(take)) {
-				w.r.verdict(e, "", "crate could not make its tree: "+err.Error())
-			}
-			continue
+			w.erred(shasOf(take), fmt.Errorf("crate could not make its tree: %w", err))
+			return
 		}
 		for sha, why := range out {
 			for _, e := range w.take([]string{sha}) {

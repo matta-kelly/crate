@@ -38,10 +38,12 @@ const (
 	Total    = "total"     // the whole run; its result is the run's
 )
 
-// The results of a step, and of a run.
+// The results of a step, and of a run. A run that crate could not do (its machine failed, not the change) is an
+// error, never a fail.
 const (
-	Pass = "pass"
-	Fail = "fail"
+	Pass  = "pass"
+	Fail  = "fail"
+	Error = "error"
 )
 
 // Line is one line of the record.

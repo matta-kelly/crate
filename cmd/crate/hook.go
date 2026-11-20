@@ -93,7 +93,8 @@ func queueVerb(args []string) error {
 			return err
 		}
 		fmt.Printf("crate: %s is first in the queue; every run starts again behind it\n", sha[:12])
-		return r.StartWorker()
+		_, err = r.StartWorker()
+		return err
 	default:
 		return usagef("%s", queueUsage)
 	}

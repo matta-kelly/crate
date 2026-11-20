@@ -63,9 +63,9 @@ func (r *Repo) StartShip() error {
 	if err := os.MkdirAll(r.state("ship"), 0o755); err != nil {
 		return err
 	}
-	unlock, free := r.tryLock("ship/ship.lock")
-	if !free {
-		return nil
+	unlock, free, err := r.tryLock("ship/ship.lock")
+	if err != nil || !free {
+		return err
 	}
 	unlock()
 	return r.detach("ship/run.log", "ship", r.Bare)

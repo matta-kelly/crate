@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/matta-kelly/crate/internal/declaration"
+	"github.com/matta-kelly/crate/internal/fault"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
 	"github.com/matta-kelly/crate/internal/record"
@@ -42,7 +43,7 @@ func (r *Repo) checkRun(ctx context.Context, rn *run) error {
 	decl, err := readDeclaration(dir)
 	if err != nil {
 		fmt.Fprintf(out, "crate: %v\n", err)
-		return ErrRefused
+		return fault.Change(err)
 	}
 	rec := r.begin("check", r.slotSystem(rn.slot), rn.tip, out)
 	err = r.run(ctx, rec, system.Check, r.slotSystem(rn.slot), dir, decl, seconds(decl.Timeout, 900),
@@ -51,10 +52,12 @@ func (r *Repo) checkRun(ctx context.Context, rn *run) error {
 	switch {
 	case ctx.Err() != nil:
 		rec.End(record.Fail, "stopped: "+note)
-	case err != nil:
+	case err == nil:
+		rec.End(record.Pass, note)
+	case fault.IsChange(err):
 		rec.End(record.Fail, note)
 	default:
-		rec.End(record.Pass, note)
+		rec.End(record.Error, note)
 	}
 	return err
 }
@@ -62,21 +65,25 @@ func (r *Repo) checkRun(ctx context.Context, rn *run) error {
 // run runs the repo's scripts/check.sh with args in a system of kind and name, made from the checkout dir as a
 // person's workspace is: its network, its services, its tools member on the repo's image, and its app. The tools
 // member's volumes are kept between runs: they hold its setup, which runs once per key (internal/system/warm.go). Up
-// and the check together stop at limit, or when ctx ends. Each step goes on rec.
+// and the check together stop at limit, or when ctx ends. Each step goes on rec. Its error says whose fault it is
+// (internal/fault): the change's own (its declaration, its build, its setup, its app, its check, its limit), or else
+// crate's machine's.
 func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string, decl declaration.Declaration, limit time.Duration, env, args []string, out io.Writer) error {
+	refuse := func(err error) error {
+		fmt.Fprintf(out, "crate: %v\n", err)
+		return err
+	}
 	image, err := imageOf(decl)
 	if err != nil || image != "" {
 		// A ref is the image as it is; the repo's own dev image is the system's step, in its slice (System.Image).
 		rec.Step(record.Image).End(err, "")
 	}
 	if err != nil {
-		fmt.Fprintf(out, "crate: %v\n", err)
-		return ErrRefused
+		return refuse(fault.Change(err))
 	}
 	folders, err := decl.Tools.Folders()
 	if err != nil {
-		fmt.Fprintf(out, "crate: %v\n", err)
-		return ErrRefused
+		return refuse(fault.Change(err))
 	}
 	if len(folders) == 0 {
 		folders = []string{"node_modules"}
@@ -104,13 +111,11 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 		Source:   source,
 	})
 	if err := s.Hold(); err != nil {
-		fmt.Fprintf(out, "crate: %v\n", err)
-		return ErrRefused
+		return refuse(err)
 	}
 	if err := s.Image(); err != nil {
 		s.Remove(keep)
-		fmt.Fprintf(out, "crate: %v\n", err)
-		return ErrRefused
+		return refuse(err)
 	}
 	// The dev image this check runs in goes to the registry by its hash, in the background (cache.go).
 	if decl.Image == "dev" {
@@ -125,18 +130,21 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 	}()
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
+	// The limit is the change's own (crate.toml's timeout); a stop is the caller's, and no one's fault.
 	stopped := func() error {
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			fmt.Fprintf(out, "crate: the %s ran past its limit of %ds, and was stopped\n", kind, int(limit.Seconds()))
+			return refuse(fault.Change(fmt.Errorf("the %s ran past its limit of %ds, and was stopped", kind, int(limit.Seconds()))))
 		}
-		return ErrRefused
+		return ctx.Err()
 	}
 	if err := s.Up(ctx); err != nil {
 		if ctx.Err() != nil {
 			return stopped()
 		}
-		fmt.Fprintf(out, "crate: %v\n", err)
-		return ErrRefused
+		return refuse(err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, "scripts", "check.sh")); err != nil || info.Mode().Perm()&0o111 == 0 {
+		return refuse(fault.Change(errors.New("scripts/check.sh is missing, or not executable")))
 	}
 	step := rec.Step(record.Check)
 	code, err := s.Run(ctx, append([]string{"scripts/check.sh"}, args...), nil, nil, out, out)
@@ -146,11 +154,15 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 		return stopped()
 	case err != nil:
 		step.End(err, "")
-		fmt.Fprintf(out, "crate: %v\n", err)
-		return ErrRefused
+		return refuse(err)
+	case code >= 125 && code <= 127:
+		// podman exec keeps 125 to 127 for its own failures: check.sh is there and executable (above)
+		err := fmt.Errorf("podman exec exited %d: podman could not run scripts/check.sh", code)
+		step.End(err, "")
+		return refuse(err)
 	case code != 0:
 		step.End(fmt.Errorf("exit %d", code), "")
-		return ErrRefused
+		return fault.Change(fmt.Errorf("scripts/check.sh exited %d", code))
 	}
 	step.End(nil, "")
 	// A passed check of a repo that ships its image keeps the image it ran, by the commit it checked, until that main
@@ -161,8 +173,7 @@ func (r *Repo) run(ctx context.Context, rec *record.Run, kind, name, dir string,
 			err = s.KeepApp(ctx, r.kept(commit))
 		}
 		if err != nil {
-			fmt.Fprintf(out, "crate: the check passed, but its image is not kept to ship: %v\n", err)
-			return ErrRefused
+			return refuse(fmt.Errorf("the check passed, but its image is not kept to ship: %w", err))
 		}
 	}
 	return nil

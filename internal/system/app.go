@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/matta-kelly/crate/internal/declaration"
+	"github.com/matta-kelly/crate/internal/fault"
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
@@ -64,7 +65,7 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 	switch {
 	case s.built() && a.Build != "":
 		if missing := missingNeeds(a.Needs, a.Env, nil); len(missing) > 0 {
-			return fmt.Errorf("app: [app] needs %s; [app] env does not give them", strings.Join(missing, ", "))
+			return fault.Change(fmt.Errorf("app: [app] needs %s; [app] env does not give them", strings.Join(missing, ", ")))
 		}
 		placement, err := s.place()
 		if err != nil {
@@ -92,7 +93,7 @@ func (s *System) app(ctx context.Context, decl declaration.Declaration, folders 
 		})
 	case !s.built() && a.Command != "":
 		if missing := missingNeeds(a.Needs, decl.Tools.Env, append(slices.Clone(s.spec.Env), s.spec.Pass...)); len(missing) > 0 {
-			return fmt.Errorf("app: [app] needs %s; neither [tools] env nor crate up -e gives them", strings.Join(missing, ", "))
+			return fault.Change(fmt.Errorf("app: [app] needs %s; neither [tools] env nor crate up -e gives them", strings.Join(missing, ", ")))
 		}
 		placement, err := s.place()
 		if err != nil {
@@ -153,7 +154,7 @@ func (s *System) build(ctx context.Context, dockerfile string, placement machine
 	buildCtx, cancel := context.WithTimeout(ctx, limit.Build())
 	defer cancel()
 	if _, err := s.call(buildCtx, build...); err != nil {
-		return fmt.Errorf("app: the build of %s: %w", dockerfile, err)
+		return fault.Own(fmt.Errorf("app: the build of %s: %w", dockerfile, err))
 	}
 	return nil
 }
@@ -250,9 +251,9 @@ func (s *System) refuses(ctx context.Context, a declaration.App, placement machi
 	without := strings.Join(a.Needs, ", ")
 	switch {
 	case state == "":
-		return fmt.Errorf("app: without %s the built image was still running after %s; it must refuse to start. Its output:\n%s", without, limit.AppReady(), text)
+		return fault.Change(fmt.Errorf("app: without %s the built image was still running after %s; it must refuse to start. Its output:\n%s", without, limit.AppReady(), text))
 	case state == "false 0":
-		return fmt.Errorf("app: without %s the built image exited 0; it must refuse to start. Its output:\n%s", without, text)
+		return fault.Change(fmt.Errorf("app: without %s the built image exited 0; it must refuse to start. Its output:\n%s", without, text))
 	}
 	var unnamed []string
 	for _, need := range a.Needs {
@@ -261,7 +262,7 @@ func (s *System) refuses(ctx context.Context, a declaration.App, placement machi
 		}
 	}
 	if len(unnamed) > 0 {
-		return fmt.Errorf("app: without %s the built image refused, but its output does not name %s. Its output:\n%s", without, strings.Join(unnamed, ", "), text)
+		return fault.Change(fmt.Errorf("app: without %s the built image refused, but its output does not name %s. Its output:\n%s", without, strings.Join(unnamed, ", "), text))
 	}
 	return nil
 }
@@ -302,7 +303,7 @@ func (s *System) ready(ctx context.Context) error {
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("app: %s: %s. Its last output:\n%s", s.appName(), why, lastOutput(s.appName()))
+	return fault.Change(fmt.Errorf("app: %s: %s. Its last output:\n%s", s.appName(), why, lastOutput(s.appName())))
 }
 
 // lastOutput is the last 20 lines of a container's output, stdout and stderr as one.

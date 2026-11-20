@@ -90,7 +90,7 @@ func (r *Repo) Received(updates []Update, wait bool, out io.Writer) (bool, error
 	if !touched {
 		return true, nil
 	}
-	if err := r.StartWorker(); err != nil {
+	if _, err := r.StartWorker(); err != nil {
 		return false, err
 	}
 	if !wait {

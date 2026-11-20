@@ -2,6 +2,7 @@
 # What crate's shell suites share: the TAP lines, a repo's first main, and a land through its merge queue.
 # A suite sets tmp (its folder) and engine before it sources this, and exits with $failed.
 : "${tmp:?a suite sets tmp}" "${engine:?a suite sets engine}"
+export XDG_STATE_HOME="$tmp/.state" # crate's machine state is the suite's own; setup's rm of $tmp/* keeps it
 
 failed=0
 n=0
