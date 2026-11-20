@@ -1,15 +1,17 @@
 package gate
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"syscall"
 
+	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
+	"github.com/matta-kelly/crate/internal/process"
 )
 
 // StartWorker starts the repo's worker, crate queue run <bare>, when changes wait and none runs. Its output goes to
@@ -79,11 +81,10 @@ func (r *Repo) detach(log string, args ...string) error {
 	own := machine.Own()
 	if own != "" {
 		prog, argv, env := own.Command("true")
-		probe := exec.Command(prog, argv...)
-		probe.Env = env
-		if out, err := probe.CombinedOutput(); err != nil {
-			return fmt.Errorf("crate's own slice %s: the user's manager did not make a scope (it is found at $XDG_RUNTIME_DIR/bus): %s: %w",
-				own, strings.TrimSpace(string(out)), err)
+		if _, err := process.Combined(context.Background(), process.Call{Prog: prog, Args: argv, Env: env,
+			Limit: limit.Systemd()}); err != nil {
+			return fmt.Errorf("crate's own slice %s: the user's manager did not make a scope (it is found at $XDG_RUNTIME_DIR/bus): %w",
+				own, err)
 		}
 	}
 	prog, argv, env := own.Command(self, args...)

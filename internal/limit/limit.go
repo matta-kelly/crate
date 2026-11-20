@@ -42,6 +42,7 @@ func scaled(d time.Duration) time.Duration {
 }
 
 func Git() time.Duration           { return scaled(30 * time.Second) }
+func GitRemote() time.Duration     { return scaled(5 * time.Minute) }
 func SkopeoInspect() time.Duration { return scaled(30 * time.Second) }
 func SkopeoCopy() time.Duration    { return scaled(10 * time.Minute) }
 func Pull() time.Duration          { return scaled(15 * time.Minute) }
@@ -55,6 +56,9 @@ func Podman() time.Duration { return scaled(30 * time.Second) }
 
 // Check is the release's check: go vet, go test and the shell tests.
 func Check() time.Duration { return scaled(30 * time.Minute) }
+
+// Grace is how long a stopped call has between TERM and KILL (internal/process).
+func Grace() time.Duration { return scaled(10 * time.Second) }
 
 // Hold is the wait for a slot on the machine.
 func Hold() time.Duration { return scaled(time.Hour) }

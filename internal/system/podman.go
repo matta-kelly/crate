@@ -1,17 +1,16 @@
 package system
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 
+	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
+	"github.com/matta-kelly/crate/internal/process"
 )
 
 // engineRemote says podman is a client of a remote engine (podman-remote, or CONTAINER_HOST), asked once.
@@ -19,8 +18,8 @@ var engineRemote = sync.OnceValue(func() bool {
 	if os.Getenv("CONTAINER_HOST") != "" {
 		return true
 	}
-	out, err := exec.Command("podman", "info", "--format", "{{.Host.ServiceIsRemote}}").Output()
-	return err == nil && strings.TrimSpace(string(out)) == "true"
+	out, err := ask(context.Background(), "info", "--format", "{{.Host.ServiceIsRemote}}")
+	return err == nil && out == "true"
 })
 
 func (s *System) isRemote() bool {
@@ -65,48 +64,31 @@ func writes(args []string) bool {
 	return false
 }
 
-// run runs one program, its output to the caller and its error naming the step.
+// run runs one program by the runner (internal/process), its output to the caller and its error naming the step.
 func (s *System) run(ctx context.Context, prog string, env []string, args ...string) (string, error) {
-	cmd := command(ctx, prog, env, args...)
-	var out bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &out
-	err := cmd.Run()
-	text := strings.TrimSpace(out.String())
+	text, err := process.Combined(ctx, process.Call{Name: prog + " " + strings.Join(args, " "), Prog: prog, Args: args, Env: env})
 	if text != "" {
 		fmt.Fprintln(s.out(), text)
 	}
-	if ctx.Err() != nil {
-		return text, fmt.Errorf("%s %s: ran past its limit: %w", prog, strings.Join(args, " "), ctx.Err())
-	}
-	if err != nil {
-		return text, fmt.Errorf("%s %s: %s: %w", prog, strings.Join(args, " "), text, err)
-	}
-	return text, nil
+	return text, err
 }
 
-func command(ctx context.Context, prog string, env []string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, prog, args...)
-	if env != nil {
-		cmd.Env = env
-	}
-	return cmd
+// ask runs a podman call that only reads, within limit.Podman, and gives its stdout. Its output is not the caller's.
+func ask(ctx context.Context, args ...string) (string, error) {
+	return process.Output(ctx, process.Call{Name: "podman " + strings.Join(args, " "), Prog: "podman", Args: args,
+		Limit: limit.Podman()})
 }
 
 // exists is a podman ask that exits 1 for no, and any other failure is an error.
 func (s *System) exists(ctx context.Context, args ...string) (bool, error) {
-	cmd := command(ctx, "podman", nil, args...)
-	err := cmd.Run()
+	_, err := ask(ctx, args...)
 	if err == nil {
 		return true, nil
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+	if process.ExitCode(err) == 1 {
 		return false, nil
 	}
-	if ctx.Err() != nil {
-		return false, fmt.Errorf("podman %s: ran past its limit: %w", strings.Join(args, " "), ctx.Err())
-	}
-	return false, fmt.Errorf("podman %s: %w", strings.Join(args, " "), err)
+	return false, err
 }
 
 func (s *System) networkExists(ctx context.Context) (bool, error) {
@@ -126,12 +108,11 @@ func (s *System) volumeExists(ctx context.Context, name string) (bool, error) {
 }
 
 func (s *System) running(ctx context.Context, name string) (bool, error) {
-	cmd := command(ctx, "podman", nil, "inspect", name, "--format", "{{.State.Running}}")
-	out, err := cmd.Output()
+	out, err := ask(ctx, "inspect", name, "--format", "{{.State.Running}}")
 	if err != nil {
-		return false, fmt.Errorf("podman inspect %s: %w", name, err)
+		return false, err
 	}
-	return strings.TrimSpace(string(out)) == "true", nil
+	return out == "true", nil
 }
 
 // runArgs is one podman run of a member.

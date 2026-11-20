@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -53,7 +54,7 @@ func devImage(args []string) error {
 		if placement, err = placeBuild(); err != nil {
 			return err
 		}
-		result, _, err = devimage.Local(o, placement)
+		result, _, err = devimage.Local(context.Background(), o, placement)
 	}
 	if err != nil {
 		return err

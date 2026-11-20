@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
+	"github.com/matta-kelly/crate/internal/process"
 	"github.com/matta-kelly/crate/internal/record"
 )
 
@@ -123,7 +123,7 @@ func (s *System) Image() error {
 		step.End(err, "")
 		return err
 	}
-	tag, source, err := devimage.Local(devimage.Options{Root: s.spec.Checkout, Stderr: s.out()}, placement)
+	tag, source, err := devimage.Local(context.Background(), devimage.Options{Root: s.spec.Checkout, Stderr: s.out()}, placement)
 	step.End(err, string(source))
 	if err != nil {
 		return err
@@ -258,15 +258,13 @@ func (s *System) Run(ctx context.Context, argv, env []string, stdin io.Reader, s
 	}
 	args = append(args, s.spec.Name+"-tools")
 	args = append(args, argv...)
-	cmd := command(ctx, "podman", nil, args...)
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdin, stdout, stderr
-	err := cmd.Run()
+	err := process.Run(ctx, process.Call{Name: "run", Prog: "podman", Args: args, Stdin: stdin, Stdout: stdout, Stderr: stderr,
+		Foreground: true})
 	if ctx.Err() != nil {
 		return 1, fmt.Errorf("run: stopped when its context ended: %w", ctx.Err())
 	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) {
-		return exit.ExitCode(), nil
+	if code := process.ExitCode(err); code > 0 {
+		return code, nil
 	}
 	return 0, err
 }
@@ -291,11 +289,8 @@ func (s *System) Logs(member string, out io.Writer) error {
 	case member != "" && member != "tools":
 		name = s.spec.Name + "-" + member + "-" + member
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), limit.Podman())
-	defer cancel()
-	cmd := command(ctx, "podman", nil, "logs", name)
-	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Run(); err != nil {
+	if err := process.Run(context.Background(), process.Call{Name: "podman logs", Prog: "podman", Args: []string{"logs", name},
+		Stdout: out, Stderr: out, Limit: limit.Podman()}); err != nil {
 		return fmt.Errorf("logs %s: %w", member, err)
 	}
 	return nil

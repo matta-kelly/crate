@@ -4,10 +4,9 @@ package devimage
 
 import (
 	"bytes"
-	"errors"
+	"context"
 	"fmt"
 	"io"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
+	"github.com/matta-kelly/crate/internal/process"
 )
 
 // Options says which repo and where the output of a build goes.
@@ -85,12 +85,14 @@ const (
 )
 
 // Local puts <image>:<hash> in this machine's store and returns the tag and how it got there: the machine's copy,
-// else a pull, else a build and a smoke with no push. The pull, the build and the smoke run in placement.
-func Local(o Options, placement machine.Placement) (string, Source, error) {
+// else a pull, else a build and a smoke with no push. The pull, the build and the smoke run in placement, and the end of
+// ctx stops each of them.
+func Local(ctx context.Context, o Options, placement machine.Placement) (string, Source, error) {
 	p, hash, err := openAtHash(o)
 	if err != nil {
 		return "", "", err
 	}
+	p.ctx = ctx
 	tag := p.image + ":" + hash
 	present, err := p.stored(tag)
 	if err != nil {
@@ -120,7 +122,7 @@ var hashTag = regexp.MustCompile(`^[0-9a-f]{16}$`)
 // podman refuses to remove it, and that refusal is no error.
 func (p *plan) dropOlder(hash string) {
 	var out bytes.Buffer
-	if err := run(call{name: "podman images", limit: limit.Podman(), dir: p.root, prog: "podman",
+	if err := run(p.ctx, call{name: "podman images", limit: limit.Podman(), dir: p.root, prog: "podman",
 		args: []string{"images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=" + p.image}}, &out, io.Discard); err != nil {
 		return
 	}
@@ -154,7 +156,7 @@ func (p *plan) digest(tag string, deniedIsMissing bool) (digest string, found bo
 func digestOf(ref, authfile string, deniedIsMissing bool) (digest string, found bool, err error) {
 	var out, errb bytes.Buffer
 	args := append([]string{"inspect", "--format", "{{.Digest}}"}, registryFlags(ref, authfile)...)
-	err = run(call{name: "skopeo inspect", limit: limit.SkopeoInspect(), prog: "skopeo",
+	err = run(context.Background(), call{name: "skopeo inspect", limit: limit.SkopeoInspect(), prog: "skopeo",
 		args: append(args, "docker://"+ref)}, &out, &errb)
 	if err == nil {
 		return strings.TrimSpace(out.String()), true, nil
@@ -173,8 +175,7 @@ func digestOf(ref, authfile string, deniedIsMissing bool) (digest string, found 
 // stored says this machine's store holds the tag. Exit 1 of `image exists` is its answer "no".
 func (p *plan) stored(tag string) (bool, error) {
 	err := p.podman("podman image exists", limit.Podman(), io.Discard, "image", "exists", tag)
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 1 {
+	if process.ExitCode(err) == 1 {
 		return false, nil
 	}
 	return err == nil, err
@@ -207,7 +208,7 @@ func (p *plan) buildTo(tag string, placement machine.Placement) error {
 			args = append(args, "--cgroup-parent="+string(placement))
 		}
 		args = append(args, candidate, "sh", "-c", smoke)
-		if err := run(call{name: "the smoke ([tools] setup with no network)", limit: limit.Smoke(), dir: p.root, prog: "podman",
+		if err := run(p.ctx, call{name: "the smoke ([tools] setup with no network)", limit: limit.Smoke(), dir: p.root, prog: "podman",
 			args: args, stdin: strings.NewReader(tree), in: placement}, p.stderr, p.stderr); err != nil {
 			return err
 		}
@@ -227,5 +228,5 @@ func (p *plan) podman(name string, d time.Duration, out io.Writer, args ...strin
 
 // podmanIn is podman in placement's slice, for a call that writes the store: what it pulls or builds is the slice's.
 func (p *plan) podmanIn(placement machine.Placement, name string, d time.Duration, out io.Writer, args ...string) error {
-	return run(call{name: name, limit: d, dir: p.root, prog: "podman", args: args, in: placement}, out, out)
+	return run(p.ctx, call{name: name, limit: d, dir: p.root, prog: "podman", args: args, in: placement}, out, out)
 }

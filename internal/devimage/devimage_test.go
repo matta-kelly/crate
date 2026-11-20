@@ -2,6 +2,7 @@ package devimage_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,7 +116,7 @@ func TestTheBuildTakesItsPlacementFromItsCaller(t *testing.T) {
 		name string
 		do   func(o devimage.Options, p machine.Placement) (string, error)
 	}{{"Local", func(o devimage.Options, p machine.Placement) (string, error) {
-		tag, _, err := devimage.Local(o, p)
+		tag, _, err := devimage.Local(context.Background(), o, p)
 		return tag, err
 	}}}
 	for _, verb := range verbs {
@@ -146,13 +147,13 @@ func TestLocalSaysWhereTheImageCameFrom(t *testing.T) {
 	root, _ := given(t)
 	o := devimage.Options{Root: root, Stderr: &bytes.Buffer{}}
 	for _, want := range []devimage.Source{devimage.Built, devimage.Stored} {
-		if _, got, err := devimage.Local(o, ""); err != nil || got != want {
+		if _, got, err := devimage.Local(context.Background(), o, ""); err != nil || got != want {
 			t.Errorf("expected %q, got %q, %v", want, got, err)
 		}
 	}
 	root, _ = given(t)
 	t.Setenv("PULLS", "1")
-	if _, got, err := devimage.Local(devimage.Options{Root: root, Stderr: &bytes.Buffer{}}, ""); err != nil || got != devimage.Pulled {
+	if _, got, err := devimage.Local(context.Background(), devimage.Options{Root: root, Stderr: &bytes.Buffer{}}, ""); err != nil || got != devimage.Pulled {
 		t.Errorf("expected %q, got %q, %v", devimage.Pulled, got, err)
 	}
 }
@@ -161,7 +162,7 @@ func TestLocalSaysWhereTheImageCameFrom(t *testing.T) {
 func TestOnlyTheBuildNamesTheSlice(t *testing.T) {
 	root, calls := given(t)
 	var stderr bytes.Buffer
-	if got, _, err := devimage.Local(devimage.Options{Root: root, Stderr: &stderr}, "crate-work.slice"); err != nil || got == "" {
+	if got, _, err := devimage.Local(context.Background(), devimage.Options{Root: root, Stderr: &stderr}, "crate-work.slice"); err != nil || got == "" {
 		t.Fatalf("expected a tag and no error, got %q, %v\n%s", got, err, stderr.String())
 	}
 	b, err := os.ReadFile(calls)

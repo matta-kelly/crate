@@ -13,6 +13,7 @@ import (
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/member"
+	"github.com/matta-kelly/crate/internal/process"
 	"github.com/matta-kelly/crate/internal/record"
 	"github.com/matta-kelly/crate/internal/router"
 )
@@ -230,18 +231,12 @@ func (s *System) refuses(ctx context.Context, a declaration.App, placement machi
 	if _, err := s.call(ctx, s.runArgs(spec)...); err != nil {
 		return err
 	}
-	defer func() {
-		rmCtx, cancel := context.WithTimeout(context.Background(), limit.Podman())
-		defer cancel()
-		_ = command(rmCtx, "podman", nil, "rm", "-f", "-t", "0", name).Run()
-	}()
+	defer func() { _, _ = ask(context.Background(), "rm", "-f", "-t", "0", name) }()
 	deadline := time.Now().Add(limit.AppReady())
 	state := ""
 	for {
-		ask, cancel := context.WithTimeout(ctx, limit.Podman())
-		out, err := command(ask, "podman", nil, "inspect", name, "--format", "{{.State.Running}} {{.State.ExitCode}}").Output()
-		cancel()
-		state = strings.TrimSpace(string(out))
+		out, err := ask(ctx, "inspect", name, "--format", "{{.State.Running}} {{.State.ExitCode}}")
+		state = out
 		if err == nil && strings.HasPrefix(state, "false ") {
 			break
 		}
@@ -251,10 +246,7 @@ func (s *System) refuses(ctx context.Context, a declaration.App, placement machi
 		}
 		time.Sleep(time.Second)
 	}
-	logCtx, cancel := context.WithTimeout(context.Background(), limit.Podman())
-	defer cancel()
-	logs, _ := command(logCtx, "podman", nil, "logs", "--tail", "20", name).CombinedOutput()
-	text := strings.TrimSpace(string(logs))
+	text := lastOutput(name)
 	without := strings.Join(a.Needs, ", ")
 	switch {
 	case state == "":
@@ -297,10 +289,7 @@ func (s *System) ready(ctx context.Context) error {
 	deadline := time.Now().Add(limit.AppReady())
 	why := fmt.Sprintf("it did not pass its health command within %s", limit.AppReady())
 	for {
-		ask, cancel := context.WithTimeout(ctx, limit.Podman())
-		err := command(ask, "podman", nil, "healthcheck", "run", s.appName()).Run()
-		cancel()
-		if err == nil {
+		if _, err := ask(ctx, "healthcheck", "run", s.appName()); err == nil {
 			return nil
 		}
 		running, rerr := s.running(ctx, s.appName())
@@ -313,10 +302,14 @@ func (s *System) ready(ctx context.Context) error {
 		}
 		time.Sleep(time.Second)
 	}
-	logCtx, cancel := context.WithTimeout(context.Background(), limit.Podman())
-	defer cancel()
-	logs, _ := command(logCtx, "podman", nil, "logs", "--tail", "20", s.appName()).CombinedOutput()
-	return fmt.Errorf("app: %s: %s. Its last output:\n%s", s.appName(), why, strings.TrimSpace(string(logs)))
+	return fmt.Errorf("app: %s: %s. Its last output:\n%s", s.appName(), why, lastOutput(s.appName()))
+}
+
+// lastOutput is the last 20 lines of a container's output, stdout and stderr as one.
+func lastOutput(name string) string {
+	text, _ := process.Combined(context.Background(), process.Call{Name: "podman logs", Prog: "podman",
+		Args: []string{"logs", "--tail", "20", name}, Limit: limit.Podman()})
+	return text
 }
 
 // removeApp takes the app's routes away, then its container and its built image, if they are there.

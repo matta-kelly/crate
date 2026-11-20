@@ -2,19 +2,17 @@ package machine
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/matta-kelly/crate/internal/limit"
+	"github.com/matta-kelly/crate/internal/process"
 )
 
 // ceiling is the machine's bound and order, placed in the user's systemd under the slice CRATE_SLICE names.
@@ -72,7 +70,7 @@ func (m *ceiling) bound() error {
 		"CPUWeight="+strconv.Itoa(sliceCPUWeight), "IOWeight="+strconv.Itoa(sliceIOWeight)); err != nil {
 		return fmt.Errorf("crate's slice %s: its line and weights: %w", unit, err)
 	}
-	out, err := runTool("systemctl --user show", limit.Systemd(), managerEnv(),
+	out, err := tool("systemctl --user show", limit.Systemd(), managerEnv(),
 		"systemctl", "--user", "show", "--property=ControlGroup", "--value", unit)
 	if err != nil {
 		return fmt.Errorf("crate's slice %s: %w", unit, err)
@@ -181,55 +179,14 @@ func startSlice(leaf string) error {
 
 // systemd runs one systemd call with its limit.
 func systemd(name string, args ...string) error {
-	_, err := runTool(name, limit.Systemd(), managerEnv(), args...)
+	_, err := tool(name, limit.Systemd(), managerEnv(), args...)
 	return err
 }
 
-// toolError is one failed call: the name it goes by, the tool's message and its exit code. The code lets a
-// caller tell a plain no from a failure; the name and the message are the whole of the error's text.
-type toolError struct {
-	name    string
-	msg     string
-	code    int
-	timeout time.Duration
-}
-
-func (e *toolError) Error() string {
-	if e.timeout > 0 {
-		return fmt.Sprintf("%s did not finish within %v", e.name, e.timeout)
-	}
-	return fmt.Sprintf("%s: %s", e.name, e.msg)
-}
-
-// runTool is the one home of every systemctl, systemd-run and podman call. It ends the call's whole process
-// group at its limit, and its error names the call and holds the tool's message.
-func runTool(name string, within time.Duration, env []string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), within)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.Env = env
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	cmd.WaitDelay = time.Second
-	var out strings.Builder
-	cmd.Stdout, cmd.Stderr = &out, &out
-	err := cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
-		return "", &toolError{name: name, timeout: within}
-	}
-	if err != nil {
-		msg := strings.TrimSpace(out.String())
-		if msg == "" {
-			msg = err.Error()
-		}
-		code := -1
-		var exit *exec.ExitError
-		if errors.As(err, &exit) {
-			code = exit.ExitCode()
-		}
-		return "", &toolError{name: name, msg: msg, code: code}
-	}
-	return out.String(), nil
+// tool runs one systemctl, systemd-run or podman call of the machine's with its limit. Its stdout and stderr are one
+// text, which a failure's error holds after the call's name.
+func tool(name string, within time.Duration, env []string, args ...string) (string, error) {
+	return process.Combined(context.Background(), process.Call{Name: name, Prog: args[0], Args: args[1:], Env: env, Limit: within})
 }
 
 // managerEnv is the process's environment with the user's runtime folder and bus named when a hook left them out.

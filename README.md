@@ -301,3 +301,6 @@ podman against the built install (`just build`, in `dist/crate`).
     lands its line there the same day, and dazoo-sync moves `/usr/local/lib/crate/current` on its next tick
 - `just rollback <major.minor.patch>`: move the major tag back
 - every call has a limit, in `internal/limit`. `CRATE_LIMIT_SCALE` divides them all, never below 1 s, for tests
+- every call runs by one runner, `internal/process`: in a process group of its own, so at its limit, or when its
+  caller stops it, the whole group gets TERM, and KILL 10 s later (`limit.Grace`). A stopped call leaves no process
+  and never holds its caller

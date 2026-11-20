@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -17,6 +16,7 @@ import (
 
 	"github.com/matta-kelly/crate/internal/limit"
 	"github.com/matta-kelly/crate/internal/machine"
+	"github.com/matta-kelly/crate/internal/process"
 )
 
 // image is the router's pinned Caddy, the copy's image.
@@ -369,15 +369,12 @@ func call(limitName string, timeout time.Duration, args ...string) (string, erro
 
 // callIn is call in placement's slice, so what podman writes (the router image's pull) is the slice's.
 func callIn(placement machine.Placement, limitName string, timeout time.Duration, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
 	prog, argv, env := placement.Command("podman", args...)
-	cmd := exec.CommandContext(ctx, prog, argv...)
-	cmd.Env = env
 	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
-	if ctx.Err() == context.DeadlineExceeded {
+	err := process.Run(context.Background(), process.Call{Prog: prog, Args: argv, Env: env, Limit: timeout,
+		Stdout: &stdout, Stderr: &stderr})
+	var failed *process.Error
+	if errors.As(err, &failed) && failed.Limit > 0 {
 		return stdout.String(), fmt.Errorf("podman %s: %s passed after %v",
 			strings.Join(args, " "), limitName, timeout)
 	}

@@ -2,6 +2,7 @@ package devimage_test
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -26,7 +27,7 @@ func TestOfNamesTheTagLocalMakes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tag, _, err := devimage.Local(o, "")
+	tag, _, err := devimage.Local(context.Background(), o, "")
 	if err != nil || tag != image+":"+hash {
 		t.Errorf("expected Local's tag %s:%s, got %q, %v", image, hash, tag, err)
 	}

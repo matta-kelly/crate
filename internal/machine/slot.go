@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/matta-kelly/crate/internal/limit"
+	"github.com/matta-kelly/crate/internal/process"
 )
 
 // Hold takes a slot of the kind for the system. A slot belongs to the system: a second Hold of the same kind
@@ -204,12 +205,11 @@ func processStart(pid int) (string, error) {
 }
 
 func networkExists(system string) (bool, error) {
-	_, err := runTool("podman network exists "+system, limit.Podman(), os.Environ(), "podman", "network", "exists", system)
+	_, err := tool("podman network exists "+system, limit.Podman(), nil, "podman", "network", "exists", system)
 	if err == nil {
 		return true, nil
 	}
-	var failed *toolError
-	if errors.As(err, &failed) && failed.code == 1 {
+	if process.ExitCode(err) == 1 {
 		return false, nil
 	}
 	return false, err

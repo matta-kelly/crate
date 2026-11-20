@@ -3,11 +3,9 @@ package gate
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"strconv"
 	"strings"
@@ -15,6 +13,7 @@ import (
 
 	"github.com/matta-kelly/crate/internal/declaration"
 	"github.com/matta-kelly/crate/internal/limit"
+	"github.com/matta-kelly/crate/internal/process"
 	"github.com/matta-kelly/crate/internal/record"
 	"github.com/matta-kelly/crate/internal/ship"
 )
@@ -210,9 +209,10 @@ func (r *Repo) runFiles(commit, folder string) ([]ship.File, error) {
 		if len(fields) != 3 || fields[1] != "blob" {
 			return nil, fmt.Errorf("the run files: %s/%s is not a file; the folder holds only files", folder, name)
 		}
-		cmd := exec.Command("git", "-C", r.Bare, "cat-file", "blob", fields[2])
-		cmd.Env = r.bareEnv
-		data, err := cmd.Output()
+		var blob bytes.Buffer
+		err := process.Run(context.Background(), process.Call{Prog: "git", Args: []string{"-C", r.Bare, "cat-file", "blob", fields[2]},
+			Env: r.bareEnv, Limit: limit.Git(), Stdout: &blob})
+		data := blob.Bytes()
 		if err != nil {
 			return nil, fmt.Errorf("the run files: %s/%s: %w", folder, name, err)
 		}
@@ -248,28 +248,16 @@ func (r *Repo) dropKept(target string, out io.Writer) {
 
 // podman runs podman with args within d. Its stdout, trimmed; on a failure, its stderr in the error.
 func podman(d time.Duration, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), d)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "podman", args...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		if ctx.Err() != nil {
-			return "", fmt.Errorf("podman %s ran past its limit of %s", args[0], d)
-		}
-		return "", fmt.Errorf("podman %s: %s: %w", args[0], strings.TrimSpace(stderr.String()), err)
-	}
-	return strings.TrimSpace(stdout.String()), nil
+	return process.Output(context.Background(), process.Call{Prog: "podman", Args: args, Limit: d})
 }
 
 // podmanExists says the image ref is in the store.
 func podmanExists(ref string) (bool, error) {
 	_, err := podman(limit.Podman(), "image", "exists", ref)
-	var exit *exec.ExitError
 	switch {
 	case err == nil:
 		return true, nil
-	case errors.As(err, &exit) && exit.ExitCode() == 1:
+	case process.ExitCode(err) == 1:
 		return false, nil
 	default:
 		return false, err

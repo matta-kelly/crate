@@ -19,6 +19,7 @@ func all() []struct {
 		want time.Duration
 	}{
 		{"Git", limit.Git, 30 * time.Second},
+		{"GitRemote", limit.GitRemote, 5 * time.Minute},
 		{"SkopeoInspect", limit.SkopeoInspect, 30 * time.Second},
 		{"SkopeoCopy", limit.SkopeoCopy, 10 * time.Minute},
 		{"Pull", limit.Pull, 15 * time.Minute},
@@ -30,6 +31,7 @@ func all() []struct {
 		{"RouterReload", limit.RouterReload, 10 * time.Second},
 		{"RouterPodman", limit.RouterPodman, 30 * time.Second},
 		{"Check", limit.Check, 30 * time.Minute},
+		{"Grace", limit.Grace, 10 * time.Second},
 		{"Hold", limit.Hold, time.Hour},
 		{"Up", limit.Up, 15 * time.Minute},
 		{"Image", limit.Image, 55 * time.Minute},

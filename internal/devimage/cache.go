@@ -2,6 +2,7 @@ package devimage
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"strings"
@@ -28,7 +29,7 @@ func Of(o Options) (image, hash string, err error) {
 // Held is the hash of each of image's tags this machine's store holds.
 func Held(image string) ([]string, error) {
 	var out, errb bytes.Buffer
-	if err := run(call{name: "podman images", limit: limit.Podman(), prog: "podman",
+	if err := run(context.Background(), call{name: "podman images", limit: limit.Podman(), prog: "podman",
 		args: []string{"images", "--format", "{{.Repository}}:{{.Tag}}", "--filter", "reference=" + image}}, &out, &errb); err != nil {
 		if msg := strings.TrimSpace(errb.String()); msg != "" {
 			return nil, fmt.Errorf("%w: %s", err, msg)
@@ -58,7 +59,7 @@ func Point(image, hash, authfile string, stderr io.Writer) error {
 
 func push(local, dest, authfile string, stderr io.Writer) error {
 	args := append([]string{"push", "--quiet"}, registryFlags(dest, authfile)...)
-	return run(call{name: "podman push", limit: limit.Push(), prog: "podman", args: append(args, local, dest)}, stderr, stderr)
+	return run(context.Background(), call{name: "podman push", limit: limit.Push(), prog: "podman", args: append(args, local, dest)}, stderr, stderr)
 }
 
 // registryFlags are the flags podman and skopeo take for ref's registry: the login, when one is given, and plain HTTP

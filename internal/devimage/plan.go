@@ -1,6 +1,7 @@
 package devimage
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ const defaultContainerfile = ".crate/Containerfile"
 
 // plan is what a repo's declaration, and the commit it is read at, say about its dev image.
 type plan struct {
+	ctx           context.Context // what stops its calls: Local's caller's, else none
 	root          string
 	rev           string
 	stderr        io.Writer
@@ -30,7 +32,7 @@ type plan struct {
 
 // open reads the declaration at the commit and settles the image name and the [dev] roles.
 func open(o Options) (*plan, error) {
-	p := &plan{root: o.Root, rev: o.Rev, stderr: o.Stderr}
+	p := &plan{ctx: context.Background(), root: o.Root, rev: o.Rev, stderr: o.Stderr}
 	if p.rev == "" {
 		p.rev = "HEAD"
 	}

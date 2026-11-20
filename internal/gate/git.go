@@ -18,15 +18,17 @@
 package gate
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"syscall"
 
+	"github.com/matta-kelly/crate/internal/limit"
+	"github.com/matta-kelly/crate/internal/process"
 	"github.com/matta-kelly/crate/internal/record"
 )
 
@@ -57,17 +59,15 @@ func (r *Repo) state(parts ...string) string {
 	return filepath.Join(append([]string{r.Bare, "crate"}, parts...)...)
 }
 
-// git runs git in the bare repo, with the hook's env. Its stdout, trimmed.
+// git runs git in the bare repo, with the hook's env, within its limit: limit.GitRemote for a call that reaches
+// GitHub, else limit.Git. Its stdout, trimmed.
 func (r *Repo) git(args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", r.Bare}, args...)...)
-	cmd.Env = r.bareEnv
-	var errb strings.Builder
-	cmd.Stderr = &errb
-	out, err := cmd.Output()
-	if err != nil {
-		return strings.TrimSpace(string(out)), fmt.Errorf("git %s: %s: %w", args[0], strings.TrimSpace(errb.String()), err)
+	within := limit.Git()
+	if args[0] == "push" || args[0] == "fetch" {
+		within = limit.GitRemote()
 	}
-	return strings.TrimSpace(string(out)), nil
+	return process.Output(context.Background(), process.Call{Name: "git " + args[0], Prog: "git",
+		Args: append([]string{"-C", r.Bare}, args...), Env: r.bareEnv, Limit: within})
 }
 
 // main is main's commit, or "" when there is none.
@@ -85,11 +85,10 @@ func (r *Repo) hasGithub() bool {
 	return err == nil
 }
 
-// work runs git in a checkout of the bare repo, with the plain env. Its combined output.
+// work runs git in a checkout of the bare repo, with the plain env, within limit.Git. Its combined output.
 func work(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	out, err := cmd.CombinedOutput()
-	return strings.TrimSpace(string(out)), err
+	return process.Combined(context.Background(), process.Call{Name: "git " + args[0], Prog: "git",
+		Args: append([]string{"-C", dir}, args...), Limit: limit.Git()})
 }
 
 // worktree makes dir a worktree of the bare repo, detached, when it is not one yet. A worktree shares the bare repo's
