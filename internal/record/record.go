@@ -1,8 +1,8 @@
 // Package record keeps crate's record: one JSON line for each step of a run, appended to a file as the step ends,
 // and one total line when the run ends. A run is one thing crate does to a system or a repo: a check, a change's
 // land through the queue, a postsubmit, a person's up, a mirror or a release. The gate's record is
-// <bare>/crate/log.jsonl; a person's is $XDG_STATE_HOME/crate/log.jsonl. The record never fails a run: a line it
-// cannot write is dropped.
+// <bare>/crate/log.jsonl, each line also in the system journal (Journal); a person's is
+// $XDG_STATE_HOME/crate/log.jsonl. The record never fails a run: a line it cannot write is dropped.
 package record
 
 import (
@@ -217,6 +217,9 @@ func appendLine(path string, line Line) {
 	data, err := json.Marshal(line)
 	if err != nil {
 		return
+	}
+	if Journal {
+		toJournal(data)
 	}
 	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)

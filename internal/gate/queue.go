@@ -262,3 +262,18 @@ func (r *Repo) entryLogs(shas []string) (io.Writer, func()) {
 		}
 	}
 }
+
+// Waiting is the queue's depth, and how long its oldest change has been in it at now. crate apply prints both for
+// each repo whose queue holds a change, so a queue that stops moving shows as a wait that grows.
+func (r *Repo) Waiting(now time.Time) (depth int, oldest time.Duration, err error) {
+	q, err := r.readQueue()
+	if err != nil {
+		return 0, 0, err
+	}
+	for _, e := range q {
+		if age := now.Sub(e.At); age > oldest {
+			oldest = age
+		}
+	}
+	return len(q), oldest, nil
+}

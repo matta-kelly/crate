@@ -5,10 +5,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func read(t *testing.T, path string) []Line {
@@ -102,5 +104,50 @@ func TestPerson(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", "/s")
 	if got := Person(); got != "/s/crate/log.jsonl" {
 		t.Errorf("Person() = %q", got)
+	}
+}
+
+func TestAServerRecordGoesToTheJournal(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "journal.sock")
+	l, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: sock, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	was, wasSock := Journal, journalSocket
+	Journal, journalSocket = true, sock
+	defer func() { Journal, journalSocket = was, wasSock }()
+
+	run := Start(filepath.Join(t.TempDir(), "log.jsonl"), nil, Line{Kind: "land", Repo: "dazoo"})
+	run.End(Pass, "")
+
+	buf := make([]byte, 4096)
+	l.SetDeadline(time.Now().Add(2 * time.Second))
+	n, err := l.Read(buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(buf[:n])
+	if !strings.HasPrefix(got, "SYSLOG_IDENTIFIER=crate\nPRIORITY=6\nMESSAGE={") || !strings.Contains(got, `"kind":"land"`) || !strings.HasSuffix(got, "}\n") {
+		t.Fatalf("journal entry %q", got)
+	}
+}
+
+func TestAPersonsRecordStaysOutOfTheJournal(t *testing.T) {
+	sock := filepath.Join(t.TempDir(), "journal.sock")
+	l, err := net.ListenUnixgram("unixgram", &net.UnixAddr{Name: sock, Net: "unixgram"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer l.Close()
+	was, wasSock := Journal, journalSocket
+	Journal, journalSocket = false, sock
+	defer func() { Journal, journalSocket = was, wasSock }()
+
+	Start(filepath.Join(t.TempDir(), "log.jsonl"), nil, Line{Kind: "up"}).End(Pass, "")
+
+	l.SetDeadline(time.Now().Add(200 * time.Millisecond))
+	if n, err := l.Read(make([]byte, 64)); err == nil {
+		t.Fatalf("a person's run sent %d bytes to the journal", n)
 	}
 }

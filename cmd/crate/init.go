@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/matta-kelly/crate/internal/gate"
 )
@@ -145,7 +146,9 @@ func initRepo(bare, github string, out io.Writer, say bool) error {
 // copy whose heads enter the queue (gate.Intake), none when unset. Safe to run again: it inits each repo, seeds a new
 // one's main from GitHub, takes in the intake's new heads, and starts the worker of a repo whose queue holds changes,
 // so a worker that stopped is started again, and the publish of a green main not yet published, so a failed one is
-// tried again. The binary's own version is its install's.
+// tried again. For a repo whose queue holds changes it prints one line, crate: queue repo=<repo> depth=<changes>
+// oldest=<seconds the oldest has waited>, so a queue that stops moving shows in the server's log. The binary's own
+// version is its install's.
 func applyVerb(args []string) error {
 	if len(args) != 1 {
 		return usagef("%s", applyUsage)
@@ -200,6 +203,9 @@ func applyVerb(args []string) error {
 				if err := r.StartWorker(); err != nil {
 					fmt.Fprintf(os.Stderr, "crate: %s: %v\n", repo, err)
 					failed = true
+				}
+				if depth, oldest, err := r.Waiting(time.Now()); err == nil && depth > 0 {
+					fmt.Printf("crate: queue repo=%s depth=%d oldest=%d\n", repo, depth, int(oldest.Seconds()))
 				}
 			}
 			continue

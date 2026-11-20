@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/matta-kelly/crate/internal/limit"
+	"github.com/matta-kelly/crate/internal/record"
 )
 
 // version and commit are set by the release's -ldflags.
@@ -25,6 +26,9 @@ type verb func(args []string) error
 
 // verbs is the table every cut adds its verbs to: each verb's file registers it.
 var verbs = map[string]verb{}
+
+// server are the verbs that run on the git server, as its account: their record also goes to the system journal.
+var server = map[string]bool{"apply": true, "hook": true, "queue": true, "postsubmit": true, "ship": true, "cache": true}
 
 func register(name string, v verb) { verbs[name] = v }
 
@@ -85,6 +89,7 @@ func dispatch(args []string) error {
 	if err := limit.CheckScale(); err != nil {
 		return err
 	}
+	record.Journal = server[flags.Arg(0)]
 	return run(flags.Args()[1:])
 }
 

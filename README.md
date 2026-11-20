@@ -255,6 +255,10 @@ a postsubmit, an `up`, a copy to GitHub (mirror), a release (a version, or an im
 - the files
   - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror, release, cache and intake of that repo
   - a person: `$XDG_STATE_HOME/crate/log.jsonl` (`~/.local/state` when unset), each `up` of that user
+- the journal: on the server, each line of the queue's record is also one journal entry, `SYSLOG_IDENTIFIER=crate`,
+  the JSON line its message, so the node's log shipper carries it. A person's record stays in its file
+- the queue line: `crate apply` prints `crate: queue repo=<repo> depth=<changes> oldest=<seconds>` for each repo
+  whose queue holds a change, so a queue that stops moving shows as a wait that grows in the server's log
 - the line: `at`, `run` (its id), `kind`, `repo`, `system`, `commit`, `step`, `seconds`, `result` (`pass` or `fail`),
   `note` (why it failed, or what: the image's `stored`, `pulled` or `built`, a check's changes, a land's main, a
   version, the revert, a publish's pin line)
