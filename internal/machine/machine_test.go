@@ -22,17 +22,20 @@ func write(t *testing.T, body string) string {
 	return path
 }
 
-// The counts come from [count], and the line from [slice] memory, else a quarter of the machine's memory.
+// The counts come from [count], the line from [slice] memory, else a quarter of the machine's memory, and the router's
+// address from [router] address, else the loopback.
 func TestTheMachineFileReadsTheCountsAndTheLine(t *testing.T) {
 	counts := "[count]\ncheck = 2\npostsubmit = 1\nattempt = 4\n"
 	rows := []struct {
-		name string
-		body string
-		line machine.Line
+		name   string
+		body   string
+		line   machine.Line
+		router string
 	}{
-		{"counts alone", counts, machine.Line{Percent: 25}},
-		{"a share", counts + "\n[slice]\nmemory = \"40%\"\n", machine.Line{Percent: 40}},
-		{"a size", counts + "\n[slice]\nmemory = \"8G\"\n", machine.Line{Bytes: 8 << 30}},
+		{"counts alone", counts, machine.Line{Percent: 25}, "127.0.0.1"},
+		{"a share", counts + "\n[slice]\nmemory = \"40%\"\n", machine.Line{Percent: 40}, "127.0.0.1"},
+		{"a size", counts + "\n[slice]\nmemory = \"8G\"\n", machine.Line{Bytes: 8 << 30}, "127.0.0.1"},
+		{"a router address", counts + "\n[router]\naddress = \"100.64.0.11\"\n", machine.Line{Percent: 25}, "100.64.0.11"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {
@@ -40,7 +43,7 @@ func TestTheMachineFileReadsTheCountsAndTheLine(t *testing.T) {
 			if err != nil || got == nil {
 				t.Fatalf("expected the file, got %v, %v", got, err)
 			}
-			want := machine.Config{Count: machine.Count{Check: 2, Postsubmit: 1, Attempt: 4}, Line: row.line}
+			want := machine.Config{Count: machine.Count{Check: 2, Postsubmit: 1, Attempt: 4}, Line: row.line, RouterAddress: row.router}
 			if !reflect.DeepEqual(*got, want) {
 				t.Errorf("expected %+v, got %+v", want, *got)
 			}
@@ -62,6 +65,8 @@ func TestTheMachineFileRefusesAKeyOrALineItCannotUse(t *testing.T) {
 		{"a size with no unit", counts + "[slice]\nmemory = \"8\"\n", `"8"`},
 		{"a size of 0", counts + "[slice]\nmemory = \"0G\"\n", "0G"},
 		{"a word", counts + "[slice]\nmemory = \"lots\"\n", "lots"},
+		{"a router address that is not an IP", counts + "[router]\naddress = \"mesh\"\n", "mesh"},
+		{"a router key crate does not know", counts + "[router]\nport = 80\n", "router.port"},
 	}
 	for _, row := range rows {
 		t.Run(row.name, func(t *testing.T) {

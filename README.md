@@ -106,9 +106,10 @@ crate does not run.
   `--cgroup-parent`
 - the count: `[count]` says how many checks, postsubmits and attempts run at once. Past it, one waits its turn, at most
   an hour. A slot is a file under `$XDG_STATE_HOME/crate/slots/<kind>/`
-- the machine file: `/etc/crate/machine.toml` (`CRATE_MACHINE`) holds crate's keys alone, `[count]` and
-  `[slice] memory` (a share, `"25%"`, or a size, `"8G"`), and a key crate does not know is an error. No file is the
-  defaults: a count of 1 for each kind, and a quarter of the memory
+- the machine file: `/etc/crate/machine.toml` (`CRATE_MACHINE`) holds crate's keys alone, `[count]`,
+  `[slice] memory` (a share, `"25%"`, or a size, `"8G"`) and `[router] address` (the IP the workspace router
+  listens on, such as the node's mesh address, so the node's proxy reaches it), and a key crate does not know is an
+  error. No file is the defaults: a count of 1 for each kind, a quarter of the memory, and the router on 127.0.0.1
 - crate's own lasting processes: a queue worker or a postsubmit, detached from the push or the unit that starts it,
   runs in a scope of crate's slice, so the end of a oneshot unit (a timer's `crate apply`) does not stop it. The scope
   is proven first: a user manager that does not answer fails the start, and the error says so

@@ -1,6 +1,7 @@
 package router_test
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -122,4 +123,25 @@ func TestARouterOnAnotherPortIsRemadeOnTheRoutersPort(t *testing.T) {
 		t.Errorf("the remade router's port: expected 127.0.0.1:%d, got %s", r.port, port)
 	}
 	waitBody(t, 10*time.Second, r.port, r.workspace+".localhost", 200, "on the new port")
+}
+
+// A router made on the loopback is made again on the machine file's [router] address, where the node's proxy reaches it.
+func TestARouterIsRemadeOnTheMachinesRouterAddress(t *testing.T) {
+	r := newRig(t)
+	startRouterByHand(t, r, "")
+	old := podman(t, "inspect", r.name, "--format", "{{.Id}}")
+	file := "[count]\ncheck = 1\npostsubmit = 1\nattempt = 1\n\n[router]\naddress = \"127.0.0.2\"\n"
+	if err := os.WriteFile(os.Getenv("CRATE_MACHINE"), []byte(file), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	startTarget(t, r.name+"-target", r.network, r.workspace+"-app", map[int]string{3000: "on the address"})
+	addRoutes(t, r.workspace, r.network, []router.Route{{Name: "web", Target: r.workspace + "-app", Port: 3000}})
+
+	if made := podman(t, "inspect", r.name, "--format", "{{.Id}}"); made == old {
+		t.Errorf("Add did not make the router on the loopback again")
+	}
+	if port := podman(t, "port", r.name, "80/tcp"); port != "127.0.0.2:"+strconv.Itoa(r.port) {
+		t.Errorf("the remade router's address: expected 127.0.0.2:%d, got %s", r.port, port)
+	}
 }

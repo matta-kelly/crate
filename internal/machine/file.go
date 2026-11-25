@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -47,20 +48,27 @@ func (l Line) Of(total uint64) uint64 {
 // DefaultLine is crate.slice's memory line when the machine file names none: a quarter of the machine's memory.
 var DefaultLine = Line{Percent: 25}
 
-// Config is the machine file: how many of each kind run at once, and crate.slice's memory line.
+// DefaultRouterAddress is the address the workspace router listens on when the machine file names none: the
+// host's loopback, so only the machine itself reaches it.
+const DefaultRouterAddress = "127.0.0.1"
+
+// Config is the machine file: how many of each kind run at once, crate.slice's memory line, and the address the
+// workspace router listens on.
 type Config struct {
-	Count Count
-	Line  Line
+	Count         Count
+	Line          Line
+	RouterAddress string
 }
 
 // Defaults is the machine of no machine file: one of each counted kind at once, and the default line.
 func Defaults() *Config {
-	return &Config{Count: Count{Check: 1, Postsubmit: 1, Attempt: 1}, Line: DefaultLine}
+	return &Config{Count: Count{Check: 1, Postsubmit: 1, Attempt: 1}, Line: DefaultLine, RouterAddress: DefaultRouterAddress}
 }
 
 // Read reads the machine file at path. A path with no file gives nil and no error. A file that cannot be read,
-// parsed or accepted is an error that names the file and the key. The file holds crate's keys only: [count], and
-// [slice] memory, the line crate draws under its own work.
+// parsed or accepted is an error that names the file and the key. The file holds crate's keys only: [count],
+// [slice] memory, the line crate draws under its own work, and [router] address, the IP the workspace router listens
+// on (a mesh address, so the node's proxy reaches it).
 func Read(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -74,6 +82,9 @@ func Read(path string) (*Config, error) {
 		Slice struct {
 			Memory string `toml:"memory"`
 		} `toml:"slice"`
+		Router struct {
+			Address string `toml:"address"`
+		} `toml:"router"`
 	}
 	if err := toml.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields().Decode(&raw); err != nil {
 		var unknown *toml.StrictMissingError
@@ -82,11 +93,11 @@ func Read(path string) (*Config, error) {
 			for i, e := range unknown.Errors {
 				keys[i] = strings.Join(e.Key(), ".")
 			}
-			return nil, fmt.Errorf("machine file %s: crate does not know the key %s; the file holds [count] and [slice] memory", path, strings.Join(keys, ", "))
+			return nil, fmt.Errorf("machine file %s: crate does not know the key %s; the file holds [count], [slice] memory and [router] address", path, strings.Join(keys, ", "))
 		}
 		return nil, fmt.Errorf("machine file %s: %w", path, err)
 	}
-	cfg := &Config{Line: DefaultLine}
+	cfg := &Config{Line: DefaultLine, RouterAddress: DefaultRouterAddress}
 	for key, dst := range map[string]*int{"check": &cfg.Count.Check, "postsubmit": &cfg.Count.Postsubmit, "attempt": &cfg.Count.Attempt} {
 		if *dst, err = number(key, raw.Count[key]); err != nil {
 			return nil, fmt.Errorf("machine file %s: %w", path, err)
@@ -102,7 +113,26 @@ func Read(path string) (*Config, error) {
 			return nil, fmt.Errorf("machine file %s: [slice] memory: %w", path, err)
 		}
 	}
+	if a := raw.Router.Address; a != "" {
+		if net.ParseIP(a) == nil {
+			return nil, fmt.Errorf("machine file %s: [router] address %q: expected an IP address", path, a)
+		}
+		cfg.RouterAddress = a
+	}
 	return cfg, nil
+}
+
+// RouterAddress is the address the workspace router listens on: the machine file's [router] address, the default with
+// no file or no key. A file that cannot be read is its error.
+func RouterAddress() (string, error) {
+	cfg, err := Read(Path())
+	if err != nil {
+		return "", err
+	}
+	if cfg == nil {
+		return DefaultRouterAddress, nil
+	}
+	return cfg.RouterAddress, nil
 }
 
 // ParseLine reads a memory line: a share, "25%", or a size, "8G" (K, M, G or T, each 1024 of the one before).

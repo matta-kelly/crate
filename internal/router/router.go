@@ -63,21 +63,26 @@ func New(m machine.Machine) *Router { return &Router{m: m} }
 // NewAt is the router named name, on the host's port, with its state in the folder state, whatever the
 // environment says. A test runs its own router this way, beside the others.
 func NewAt(m machine.Machine, name string, port int, state string) *Router {
-	return &Router{m: m, own: &config{name: name, port: port, state: state}}
+	return &Router{m: m, own: &config{name: name, address: machine.DefaultRouterAddress, port: port, state: state}}
 }
 
 // config is what the router reads of the environment, the same the copy's workspace.sh reads.
 type config struct {
-	name  string
-	port  int
-	state string
+	name    string
+	address string // the host address it listens on: the machine file's [router] address
+	port    int
+	state   string
 }
 
 func (r *Router) config() (config, error) {
 	if r.own != nil {
 		return *r.own, nil
 	}
-	c := config{name: "workspace-router", port: DefaultPort}
+	address, err := machine.RouterAddress()
+	if err != nil {
+		return config{}, err
+	}
+	c := config{name: "workspace-router", address: address, port: DefaultPort}
 	if v := os.Getenv("WORKSPACE_ROUTER"); v != "" {
 		c.name = v
 	}
@@ -249,11 +254,11 @@ func (r *Router) ensure(c config, network string) error {
 		return nil
 	}
 	made, err := r.podman("inspect", c.name, "--format",
-		"{{.HostConfig.NanoCpus}} {{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostPort}}{{end}}{{end}}")
+		"{{.HostConfig.NanoCpus}} {{range $p, $b := .HostConfig.PortBindings}}{{range $b}}{{.HostIP}}:{{.HostPort}}{{end}}{{end}}")
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(made) != "0 "+strconv.Itoa(c.port) {
+	if strings.TrimSpace(made) != "0 "+c.address+":"+strconv.Itoa(c.port) {
 		networks, err := r.networks(c.name)
 		if err != nil {
 			return err
@@ -315,7 +320,7 @@ func (r *Router) make(c config, networks []string) error {
 	if placement != "" {
 		args = append(args, "--cgroup-parent", string(placement))
 	}
-	args = append(args, "-p", fmt.Sprintf("127.0.0.1:%d:80", c.port))
+	args = append(args, "-p", fmt.Sprintf("%s:%d:80", c.address, c.port))
 	for _, mount := range []string{"Caddyfile:/etc/caddy/Caddyfile", "routes:/etc/caddy/routes", "data:/data", "config:/config"} {
 		source, target, _ := strings.Cut(mount, ":")
 		args = append(args, "-v", filepath.Join(c.state, source)+":"+target+":Z")
