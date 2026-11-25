@@ -78,6 +78,12 @@ func (f *fixture) write(path, body string) {
 // change makes a commit on main as the client last fetched it, with the files given, and puts it in the queue.
 func (f *fixture) change(subject string, files map[string]string) string {
 	f.t.Helper()
+	return f.changeFrom(subject, files, "")
+}
+
+// changeFrom is change for a change the intake took from branch.
+func (f *fixture) changeFrom(subject string, files map[string]string, branch string) string {
+	f.t.Helper()
 	f.git(f.client, "checkout", "-q", "--detach", "main")
 	for path, body := range files {
 		f.write(path, body)
@@ -86,7 +92,7 @@ func (f *fixture) change(subject string, files map[string]string) string {
 	f.git(f.client, "commit", "-qm", subject)
 	sha := f.git(f.client, "rev-parse", "HEAD")
 	f.git(f.client, "push", "-q", f.repo.Bare, "HEAD:"+queueRef(sha))
-	if _, err := f.repo.Enter(sha, false); err != nil {
+	if _, err := f.repo.enter(sha, false, branch); err != nil {
 		f.t.Fatal(err)
 	}
 	return sha

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/matta-kelly/crate/internal/record"
+	"github.com/matta-kelly/crate/internal/status"
 )
 
 // Intake: a change an update bot proposes as a branch on the repo's GitHub copy enters the queue as if it were pushed
@@ -14,7 +15,8 @@ import (
 // sources under refs/heads/, and ^ ones left out) into refs/intake/, and enters each head the queue has never held. A
 // head enters once: its change's log in queue/ is kept, so a head that landed or was refused is not checked again,
 // and a new push to the branch is a new head. The door's rules hold: the head shares history with main, and is not on
-// main already. The copy to GitHub moves only main, so it never touches the bot's branches.
+// main already. The copy to GitHub moves only main, so it never touches the bot's branches. crate's commit status on
+// the head tells the bot and its pull request what became of it: pending as it enters, then its verdict.
 
 // IntakeSpecs is the fetch's refspecs for patterns: refs/heads/<name> fetched to refs/intake/<name>, a ^ one as is.
 func IntakeSpecs(patterns []string) ([]string, error) {
@@ -68,7 +70,8 @@ func (r *Repo) Intake(patterns []string, out io.Writer) error {
 			rec.End(record.Fail, err.Error())
 			return err
 		}
-		place, err := r.Enter(sha, false)
+		r.report(Entry{Sha: sha, Branch: branch}, status.Pending, "in crate's queue")
+		place, err := r.enter(sha, false, branch)
 		if err != nil {
 			rec.End(record.Fail, err.Error())
 			return err

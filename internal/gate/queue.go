@@ -13,6 +13,7 @@ import (
 
 	"github.com/matta-kelly/crate/internal/machine"
 	"github.com/matta-kelly/crate/internal/record"
+	"github.com/matta-kelly/crate/internal/status"
 )
 
 // The queue: the changes waiting to land on main, in order. A change is a commit, held by its ref refs/queue/<sha>
@@ -28,6 +29,7 @@ type Entry struct {
 	Limit   int       `json:"limit,omitempty"`  // the most changes it may be checked with, after a bisect; 0 for the repo's batch
 	Slot    *int      `json:"slot,omitempty"`   // the run checking it now; none while it waits
 	Errors  int       `json:"errors,omitempty"` // the runs of it that crate could not check (an error, not a fail)
+	Branch  string    `json:"branch,omitempty"` // the branch on the repo's GitHub copy it came from, by the intake
 }
 
 // The two shapes of a change's last line: its verdict.
@@ -89,7 +91,10 @@ func position(q []Entry, sha string) int {
 
 // Enter puts sha at the back of the queue, or at its front when jump, and says its place, from 1. Its ref must hold
 // it already. A change in the queue already keeps its place.
-func (r *Repo) Enter(sha string, jump bool) (int, error) {
+func (r *Repo) Enter(sha string, jump bool) (int, error) { return r.enter(sha, jump, "") }
+
+// enter is Enter for a change from branch on the repo's GitHub copy, or from no branch when it is "".
+func (r *Repo) enter(sha string, jump bool, branch string) (int, error) {
 	if err := os.MkdirAll(r.state("queue"), 0o755); err != nil {
 		return 0, err
 	}
@@ -102,7 +107,7 @@ func (r *Repo) Enter(sha string, jump bool) (int, error) {
 		if err := os.WriteFile(r.entryLog(sha), nil, 0o644); err != nil {
 			return nil, err
 		}
-		e := Entry{Sha: sha, At: time.Now().UTC()}
+		e := Entry{Sha: sha, At: time.Now().UTC(), Branch: branch}
 		if jump {
 			e.Limit = 1
 			place = 1
@@ -147,7 +152,8 @@ func (r *Repo) Leave(sha, why string) error {
 
 // verdict ends a change: landed as the main commit as, or not landed for why when as is "". Its last line, its ref
 // gone (refs/landed/<sha> at as when it landed, first, so a client never sees neither), and its land run on the
-// record: the wait from entering to its first run, and the whole of it.
+// record: the wait from entering to its first run, and the whole of it. A change from the intake gets it as crate's
+// commit status on GitHub.
 func (r *Repo) verdict(e Entry, as, why string) { r.verdictAs(e, as, why, record.Fail) }
 
 // verdictAs is verdict with the result a change that does not land records: a fail, or an error when crate could not
@@ -166,6 +172,14 @@ func (r *Repo) verdictAs(e Entry, as, why, failed string) {
 		record.Append(path, run, record.Wait, e.Started.Sub(e.At), record.Pass, "")
 	}
 	record.Append(path, run, record.Total, time.Since(e.At), result, text)
+	state := status.Failure
+	switch {
+	case as != "":
+		state = status.Success
+	case failed == record.Error:
+		state = status.Error
+	}
+	r.report(e, state, strings.TrimPrefix(line, "crate: "))
 }
 
 // Wait prints the change's output as it comes, until its verdict, and says whether it landed. While it waits, it

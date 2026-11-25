@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
 # The tests of the intake, on real git: crate apply fetches the branches INTAKE names from a stand-in GitHub and enters
-# each new head in the queue, once; a branch left out, or a head on main already, does not enter.
+# each new head in the queue, once; a branch left out, or a head on main already, does not enter. A head that enters
+# gets crate's commit status; with no token, the record says it was not posted, and the head enters all the same.
 set -uo pipefail
 root=${CRATE_ROOT:-$(dirname "$(dirname "$(readlink -f "$0")")")}  # the install to test: the built layout
 tmp=$(mktemp -d)
 export XDG_STATE_HOME="$tmp/.state" # crate's machine state is the suite's own
+export XDG_CONFIG_HOME="$tmp/.config" # and its config: no GitHub token, so no status is posted
+unset CRATE_GITHUB_API
 export GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@t GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@t
 trap 'pkill -f "crate (queue|postsubmit|ship) $tmp" 2>/dev/null; rm -rf "$tmp"' EXIT
 failed=0
@@ -47,6 +50,11 @@ if [ -e "$bare/crate/queue/$bump.log" ] && grep -q "from GitHub's renovate/x ent
     "$bare/crate/log.jsonl" >/dev/null; then
   ok "a head under INTAKE enters the queue, and the record says intake"
 else not_ok "a head under INTAKE enters the queue, and the record says intake" "$out"; fi
+
+if jq -e --arg c "$bump" 'select(.kind == "status" and .commit == $c and .result == "error" and (.note | contains("no GitHub token")))' \
+  "$bare/crate/log.jsonl" >/dev/null; then
+  ok "with no GitHub token, the head enters, and the record says its status was not posted"
+else not_ok "with no GitHub token, the head enters, and the record says its status was not posted" "$(grep status "$bare/crate/log.jsonl")"; fi
 
 if [ ! -e "$bare/crate/queue/$major.log" ] && ! git -C "$bare" rev-parse -q --verify refs/intake/renovate/major-y >/dev/null; then
   ok "a branch left out with ^ is not fetched, and does not enter"

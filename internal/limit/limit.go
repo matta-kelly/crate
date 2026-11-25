@@ -51,6 +51,9 @@ func Build() time.Duration         { return scaled(30 * time.Minute) }
 func Smoke() time.Duration         { return scaled(10 * time.Minute) }
 func Gh() time.Duration            { return scaled(5 * time.Minute) }
 
+// GitHub is one call of GitHub's REST API: a commit status.
+func GitHub() time.Duration { return scaled(30 * time.Second) }
+
 // Podman is a call of the engine that only reads or moves a name: image exists, tag, image rm.
 func Podman() time.Duration { return scaled(30 * time.Second) }
 

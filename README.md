@@ -221,6 +221,11 @@ the merge queue: main moves only to a tree that passed, and only the queue moves
   never held, as a push to `refs/queue/<sha>` would, under the door's rules; the record says `intake`. A head enters
   once (its change's log is kept), so one that landed or was refused is not checked again, and a new push to the
   branch is a new head. A branch left out (a major) waits for a person to land it
+- the status: crate's verdict on a change from the intake, as a commit status named `crate` on its head on GitHub,
+  which the bot's pull request shows: `pending` as it enters, then `success` (landed), `failure` (refused) or
+  `error` (crate could not check it). The token: `$XDG_CONFIG_HOME/crate/github-token` (`~/.config` when unset), a
+  fine-grained one with commit statuses write on the repos crate serves. Each post is on the record, kind
+  `status`; one that fails (no token, GitHub down) is recorded, and the change is decided all the same
 
 `hooks/` holds two one-line scripts that run `crate hook <name>` from the install beside them. The queue's state lives
 beside each bare repo, in `<bare>/crate`: `queue.json`, each change's log in `queue/`, the runs' worktrees, the
@@ -264,11 +269,11 @@ it, so a node runs what crate tested. Nothing on GitHub builds it again.
 
 crate's record of what it did and how long each part took: one JSON line per step of a run, appended as the step
 ends, and a total line when the run ends. A run is one thing crate does: a check, a change's land through the queue,
-a postsubmit, an `up`, a copy to GitHub (mirror), a release (a version, or an image's publish) or a push of dev images
-(cache).
+a postsubmit, an `up`, a copy to GitHub (mirror), a release (a version, or an image's publish), a push of dev images
+(cache) or a commit status (status).
 
 - the files
-  - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror, release, cache and intake of that repo
+  - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror, release, cache, intake and status of that repo
   - a person: `$XDG_STATE_HOME/crate/log.jsonl` (`~/.local/state` when unset), each `up` of that user
 - the journal: on the server, each line of the queue's record is also one journal entry, `SYSLOG_IDENTIFIER=crate`,
   the JSON line its message, so the node's log shipper carries it. A person's record stays in its file
