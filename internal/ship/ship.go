@@ -78,7 +78,8 @@ type File struct {
 	Data []byte
 }
 
-// Stamp puts tag in place of the :VERSION that ends each Image= line of the .container files. A VERSION left anywhere
+// Stamp puts tag in place of the :VERSION that ends each Image= line of the .container files, and each image: line of
+// the .yaml files (a definition's containers). A VERSION left anywhere
 // after is an error that names its file and line, so a release names only the image it ships. The files come back
 // sorted by name.
 func Stamp(files []File, tag string) ([]File, error) {
@@ -89,7 +90,9 @@ func Stamp(files []File, tag string) ([]File, error) {
 	for _, f := range files {
 		lines := strings.Split(string(f.Data), "\n")
 		for i, line := range lines {
-			if strings.HasSuffix(f.Name, ".container") && strings.HasPrefix(strings.TrimSpace(line), "Image=") {
+			trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+			if (strings.HasSuffix(f.Name, ".container") && strings.HasPrefix(trimmed, "Image=")) ||
+				(strings.HasSuffix(f.Name, ".yaml") && strings.HasPrefix(trimmed, "image:")) {
 				lines[i] = version.ReplaceAllString(strings.TrimRight(line, " \t\r"), ":"+tag)
 			}
 			if strings.Contains(lines[i], "VERSION") {
@@ -100,6 +103,27 @@ func Stamp(files []File, tag string) ([]File, error) {
 	}
 	sort.Slice(stamped, func(i, j int) bool { return stamped[i].Name < stamped[j].Name })
 	return stamped, nil
+}
+
+// Definition is a definition's run files as a node's Quadlet folder takes them, beside every other app's: app.yaml as
+// <name>.yaml, prod.yaml as <name>.prod.yaml, and <name>.kube, which plays them. The node's drop-in for <name>.kube
+// adds its own lines: its network, its isolation, its published port.
+func Definition(name string, files []File) ([]File, error) {
+	renamed := map[string]string{"app.yaml": name + ".yaml", "prod.yaml": name + ".prod.yaml"}
+	out := []File{{Name: name + ".kube", Data: []byte(fmt.Sprintf(
+		"# %s, as its definition runs it: crate ships this file with the two it plays\n[Kube]\nYaml=%s\nConfigMap=%s\n",
+		name, renamed["app.yaml"], renamed["prod.yaml"]))}}
+	for _, f := range files {
+		to, ok := renamed[f.Name]
+		if !ok {
+			return nil, fmt.Errorf("the run files: %s is not app.yaml or prod.yaml", f.Name)
+		}
+		out = append(out, File{Name: to, Data: f.Data})
+	}
+	if len(out) != 3 {
+		return nil, errors.New("the run files: a definition ships app.yaml and prod.yaml")
+	}
+	return out, nil
 }
 
 // Pack is the files as a tar.gz that is the same bytes for the same files: sorted by name, owner and group 0, mode

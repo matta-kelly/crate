@@ -287,6 +287,9 @@ func (s *System) Logs(member string, out io.Writer) error {
 	switch {
 	case member == "app":
 		name = s.appName()
+		if decl, _, err := s.read(); err == nil {
+			_, name = s.shape(decl.App)
+		}
 	case member != "" && member != "tools":
 		name = s.spec.Name + "-" + member + "-" + member
 	}

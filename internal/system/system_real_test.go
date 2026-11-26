@@ -178,6 +178,9 @@ spec:
 
 func (w *world) write(path, body string) {
 	w.t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(w.root, path)), 0o755); err != nil {
+		w.t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(w.root, path), []byte(body), 0o644); err != nil {
 		w.t.Fatal(err)
 	}
@@ -283,6 +286,7 @@ func (w *world) leftovers() []string {
 		{"pod", "ls", "--format", "{{.Name}}"},
 		{"volume", "ls", "--format", "{{.Name}}"},
 		{"network", "ls", "--format", "{{.Name}}"},
+		{"secret", "ls", "--format", "{{.Name}}"},
 	} {
 		out, err := w.podman(ask...)
 		if err != nil {
@@ -303,6 +307,7 @@ func (w *world) sweep() {
 		{"pod", "ls", "--format", "{{.Name}}"},
 		{"volume", "ls", "--format", "{{.Name}}"},
 		{"network", "ls", "--format", "{{.Name}}"},
+		{"secret", "ls", "--format", "{{.Name}}"},
 	} {
 		out, err := w.podman(ask...)
 		if err != nil {
@@ -321,6 +326,8 @@ func (w *world) sweep() {
 				_, _ = w.podman("volume", "rm", "-f", name)
 			case "network":
 				_, _ = w.podman("network", "rm", "-f", name)
+			case "secret":
+				_, _ = w.podman("secret", "rm", name)
 			}
 		}
 	}

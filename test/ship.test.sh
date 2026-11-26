@@ -175,6 +175,49 @@ postsubmit: $(tail -5 "$tmp/repo.git/crate/postsubmit/run.log" 2>/dev/null; tail
 ship: $(tail -5 "$tmp/repo.git/crate/ship/run.log" 2>/dev/null)
 worker: $(tail -5 "$tmp/repo.git/crate/worker.log" 2>/dev/null)"; fi
 
+# a definition ([app] deploy): the check runs it with the built image, and a green main ships it as a .kube and the
+# two files it plays, each image stamped; a workspace's dev.yaml stays in the repo
+login
+setup
+sed -i -e '/^health = /d' -e '/^quadlets = /d' -e '/^\[\[app.ports\]\]/,$d' crate.toml
+sed -i 's|^publish = .*|&\ndeploy = "deploy"|' crate.toml
+git rm -rq deploy/quadlets && mkdir -p deploy
+cat >deploy/app.yaml <<YAML
+apiVersion: v1
+kind: Pod
+metadata:
+  name: shipped
+spec:
+  containers:
+    - name: web
+      image: $reg/o/app:VERSION
+      ports:
+        - { name: web, containerPort: 8080 }
+      livenessProbe:
+        exec: { command: ["wget", "-qO-", "http://127.0.0.1:8080/"] }
+YAML
+printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: shipped\ndata:\n  WHERE: dev\n' >deploy/dev.yaml
+printf 'apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: shipped\ndata:\n  WHERE: prod\n' >deploy/prod.yaml
+git add -A && git commit -qm "feat: the app's definition"
+out=$(land)
+settle
+main=$(main_of "$tmp/repo.git")
+tag=$(tag_of "$main")
+pin=$(grep '^shipped ' "$tmp/repo.git/crate/ship/run.log" | tail -1)
+digest=${pin##* }
+rm -rf "$tmp/node"
+if grep -q "app says $(cat note)" <<<"$out" && [ "$(published)" = "$main" ]; then ok "a check runs the definition with the built image, and its green main publishes"
+else not_ok "a check runs the definition with the built image, and its green main publishes" "$out
+$(tail -5 "$tmp/repo.git/crate/ship/run.log")"; fi
+if got=$(fetch o/app-quadlets "$digest" "$tmp/node" 2>&1) &&
+  [ "$(find "$tmp/node" -type f ! -name quadlets.tar.gz -printf '%f\n' | sort | tr '\n' ' ')" = "shipped.kube shipped.prod.yaml shipped.yaml " ] &&
+  grep -qx "Yaml=shipped.yaml" "$tmp/node/shipped.kube" && grep -qx "ConfigMap=shipped.prod.yaml" "$tmp/node/shipped.kube" &&
+  grep -q "image: $reg/o/app:$tag\$" "$tmp/node/shipped.yaml" && grep -q "WHERE: prod" "$tmp/node/shipped.prod.yaml"; then
+  ok "a node fetches the definition as a .kube, its YAML with each image stamped, and production's values"
+else not_ok "a node fetches the definition as a .kube, its YAML with each image stamped, and production's values" "$got
+$(find "$tmp/node" -type f 2>&1)
+$(cat "$tmp/node/shipped.kube" "$tmp/node/shipped.yaml" 2>&1)"; fi
+
 # a repo that does not ship its image keeps nothing
 setup
 sed -i -e '/^ship = /d' -e '/^publish = /d' -e '/^quadlets = /d' crate.toml

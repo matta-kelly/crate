@@ -39,6 +39,8 @@ The app, by kind:
   every capability dropped, no new privileges
 - each waits until `[app] health` passes inside the app (as a quadlet's `HealthCmd`), for at most a minute. An app that
   stops, or is not healthy in time, fails `up` with its last output
+- the definition, `[app] deploy`: the folder of how the app runs in every place, played by `podman kube play` as one
+  Pod, `<name>-<folder>-app`, reached as `app` ([The definition](#the-definition))
 
 ## crate.toml
 
@@ -83,7 +85,40 @@ inputs = [".crate/Containerfile", "pnpm-lock.yaml", "package.json"]
 - a built app needs at least one port. The dev image needs the tool `health` calls (`wget`) when the dev server runs it
 - the merge queue's keys: `crate`, `image`, `timeout`, `batch`, `ship`, `packages`, `postsubmit`, `postsubmit_timeout`
   ([The merge queue](#the-merge-queue)); and, for `ship = "image"`, `[app] publish`, the repository the image ships to
-  (`ghcr.io/<owner>/<name>`, no tag), and `[app] quadlets`, the folder of its run files ([The ship](#the-ship))
+  (`ghcr.io/<owner>/<name>`, no tag), and `[app] quadlets` or `deploy`, the folder of its run files ([The ship](#the-ship))
+
+## The definition
+
+`[app] deploy = "deploy"`: the app as a workspace, a check and production each run it, in Kubernetes YAML, the format
+podman plays by hand (`podman kube play`) and under systemd (a `.kube` Quadlet). In place of `[app]` env, health,
+ports, needs and quadlets, which it holds.
+
+```
+deploy/
+├── app.yaml     the app: one Pod, its containers and init containers, their images (<publish>:VERSION), ports,
+│                livenessProbe and securityContext, and each value (configMapKeyRef) and secret (secretKeyRef) by name
+├── dev.yaml     a workspace's and a check's values, a ConfigMap, and secrets, a Secret, each named as app.yaml names them
+└── prod.yaml    production's values, a ConfigMap. Its secrets are the node's own podman secret of the same name
+```
+
+- the play: app.yaml with dev.yaml, as one file of crate's alone, on the system's network as `app` and
+  `<name>-<folder>-app`. Each name podman keeps is the system's: the Pod `<name>-<folder>-app`, each Secret
+  `<name>-<folder>-<its name>`, so two workspaces of one repo never meet
+- the binding: each key app.yaml names, a deploy must give. podman refuses a play that lacks one, and names it
+- a check and postsubmit: `[app] build`, the image that ships, in place of each image that ends in `:VERSION`, run as
+  the definition says production runs it
+- a person's workspace and an attempt: every container in the dev image, the checkout its working folder, its volumes
+  mounted, as user 1000 (keep-id), with no securityContext. The app's container, the first, runs `[app] command`; an
+  init container runs its own command from the checkout, so a relative command (`db/migrate.sh`) runs the change's
+  file. The app's container takes `up -e` (its value is written to the play's file, never to argv) and `CRATE_ROUTER`
+- the health: the app's container's livenessProbe, which crate runs as in [A workspace](#a-workspace)
+- the ports: the app's container's named ports: the routes, `CRATE_APP_URL`, and the one a built app must have
+- the ship: app.yaml as `<name>.yaml` and prod.yaml as `<name>.prod.yaml`, each `image:` that ends in `:VERSION`
+  stamped, and `<name>.kube`, the Quadlet that plays them (`Yaml=`, `ConfigMap=`), so each app's files sit beside every
+  other app's in a node's Quadlet folder ([The ship](#the-ship)). The node's drop-in, `<name>.kube.d/<name>.conf`, adds
+  its own lines: its network, its isolation, its published port
+- a definition that is not one Pod with a container, or values that are not ConfigMaps and Secrets, fail `up` and
+  say why
 
 ## The machine
 
@@ -247,8 +282,9 @@ it, so a node runs what crate tested. Nothing on GitHub builds it again.
     later main has a larger number, and an update bot (Renovate) orders the tags as versions. The
     commit is the run files' revision
   - the image: pushed as `<publish>:<build>`. No `latest`
-  - the run files: each file of `quadlets` at the commit, each `Image=` of a `.container` that ends in `:VERSION`
-    stamped with `:<build>`. A `VERSION` left after is refused. They are packed as one tar.gz that is the
+  - the run files: each file of `quadlets` at the commit, or `deploy`'s definition as a `.kube` and the two files it
+    plays ([The definition](#the-definition)), each `Image=` of a `.container` and each `image:` of a `.yaml` that ends
+    in `:VERSION` stamped with `:<build>`. A `VERSION` left after is refused. They are packed as one tar.gz that is the
     same bytes for the same files (sorted names, owner 0, time 0), and pushed with oras-go as an OCI artifact,
     `<publish>-quadlets:<build>`: its layer `quadlets.tar.gz` (`application/vnd.oci.image.layer.v1.tar+gzip`),
     its artifact type `application/vnd.<name>.quadlets.v1`, its source the repo on GitHub, its revision the commit,

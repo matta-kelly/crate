@@ -29,7 +29,7 @@ type Router interface {
 // routerEnv is CRATE_ROUTER, the router's URL from inside the workspace, for a person's workspace with routes: the
 // router is on its network, so a member reaches another workspace's app there by that workspace's host. "" for none.
 func (s *System) routerEnv(a declaration.App) (string, error) {
-	if s.spec.Kind != Work || s.spec.Router == nil || len(a.Ports) == 0 {
+	if ports, _ := s.shape(a); s.spec.Kind != Work || s.spec.Router == nil || len(ports) == 0 {
 		return "", nil
 	}
 	within, err := s.spec.Router.Within()
@@ -39,18 +39,54 @@ func (s *System) routerEnv(a declaration.App) (string, error) {
 	return "CRATE_ROUTER=" + within, nil
 }
 
-// appName is the app member's container, and its alias beside "app".
+// appName is the app member's name: its container, or its Pod when [app] deploy defines it, its image, and its alias
+// beside "app".
 func (s *System) appName() string { return s.spec.Name + "-app" }
+
+// shape is the app as this system runs it: its ports, and the container podman runs it in. [app] deploy's are its
+// definition's; one that does not render gives no ports, and app says why.
+func (s *System) shape(a declaration.App) ([]declaration.Port, string) {
+	if a.Deploy == "" {
+		return a.Ports, s.appName()
+	}
+	definition, values, err := readDefinition(s.spec.Checkout, a.Deploy)
+	if err != nil {
+		return nil, s.appName()
+	}
+	r, err := render(definition, values, s.spec.Name, "", nil)
+	if err != nil {
+		return nil, s.appName()
+	}
+	return r.Ports, r.Container
+}
+
+// definedSecrets are the podman secrets the app's play makes, from the checkout's [app] deploy, or none.
+func (s *System) definedSecrets() []string {
+	decl, _, err := s.read()
+	if err != nil || decl.App.Deploy == "" {
+		return nil
+	}
+	definition, values, err := readDefinition(s.spec.Checkout, decl.App.Deploy)
+	if err != nil {
+		return nil
+	}
+	r, err := render(definition, values, s.spec.Name, "", nil)
+	if err != nil {
+		return nil
+	}
+	return r.Secrets
+}
 
 // appURL is the URL the tools member reaches the app at, by its full name and its first port, or "" when this kind
 // runs no app or the app has no port. A browser needs it: app alone is a top-level domain that Chrome sends to https
 // (the HSTS preload list).
 func (s *System) appURL(a declaration.App) string {
 	runs := (s.built() && a.Build != "") || (!s.built() && a.Command != "")
-	if !runs || len(a.Ports) == 0 {
+	ports, _ := s.shape(a)
+	if !runs || len(ports) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("http://%s:%d", s.appName(), a.Ports[0].Port)
+	return fmt.Sprintf("http://%s:%d", s.appName(), ports[0].Port)
 }
 
 // built says this kind runs the image that ships, not the dev server.
@@ -61,6 +97,9 @@ func (s *System) built() bool { return s.spec.Kind == Check || s.spec.Kind == Po
 // with nothing to run makes no app.
 func (s *System) app(ctx context.Context, decl declaration.Declaration, folders []string) error {
 	a := decl.App
+	if a.Deploy != "" {
+		return s.definedApp(ctx, decl, folders)
+	}
 	var spec member.Spec
 	switch {
 	case s.built() && a.Build != "":
@@ -192,18 +231,24 @@ func (s *System) start(ctx context.Context, spec member.Spec, a declaration.App)
 		}
 	}
 	if a.Health != "" {
-		if err := s.ready(ctx); err != nil {
+		if err := s.ready(ctx, spec.Name); err != nil {
 			return err
 		}
 	}
-	if s.spec.Kind == Work && s.spec.Router != nil && len(a.Ports) > 0 {
-		routes := make([]router.Route, len(a.Ports))
-		for i, p := range a.Ports {
-			routes[i] = router.Route{Name: p.Name, Target: s.appName(), Port: p.Port}
-		}
-		if err := s.spec.Router.Add(s.spec.Name, s.spec.Name, routes); err != nil {
-			return fmt.Errorf("app: its routes: %w", err)
-		}
+	return s.route(a.Ports)
+}
+
+// route adds a person's workspace's routes to the app, one per port, at its name on the network.
+func (s *System) route(ports []declaration.Port) error {
+	if s.spec.Kind != Work || s.spec.Router == nil || len(ports) == 0 {
+		return nil
+	}
+	routes := make([]router.Route, len(ports))
+	for i, p := range ports {
+		routes[i] = router.Route{Name: p.Name, Target: s.appName(), Port: p.Port}
+	}
+	if err := s.spec.Router.Add(s.spec.Name, s.spec.Name, routes); err != nil {
+		return fmt.Errorf("app: its routes: %w", err)
 	}
 	return nil
 }
@@ -286,14 +331,14 @@ func missingNeeds(needs []string, env map[string]string, extra []string) []strin
 // ready runs the app's health command once a second until it passes, within limit.AppReady. crate runs it, not
 // podman's timer, so it holds on every machine. An app that stops, or is not healthy in time, fails Up with its
 // last lines of output.
-func (s *System) ready(ctx context.Context) error {
+func (s *System) ready(ctx context.Context, name string) error {
 	deadline := time.Now().Add(limit.AppReady())
 	why := fmt.Sprintf("it did not pass its health command within %s", limit.AppReady())
 	for {
-		if _, err := ask(ctx, "healthcheck", "run", s.appName()); err == nil {
+		if _, err := ask(ctx, "healthcheck", "run", name); err == nil {
 			return nil
 		}
-		running, rerr := s.running(ctx, s.appName())
+		running, rerr := s.running(ctx, name)
 		if rerr == nil && !running {
 			why = "it stopped before it passed its health command"
 			break
@@ -303,7 +348,7 @@ func (s *System) ready(ctx context.Context) error {
 		}
 		time.Sleep(time.Second)
 	}
-	return fault.Change(fmt.Errorf("app: %s: %s. Its last output:\n%s", s.appName(), why, lastOutput(s.appName())))
+	return fault.Change(fmt.Errorf("app: %s: %s. Its last output:\n%s", name, why, lastOutput(name)))
 }
 
 // lastOutput is the last 20 lines of a container's output, stdout and stderr as one.
@@ -313,12 +358,16 @@ func lastOutput(name string) string {
 	return text
 }
 
-// removeApp takes the app's routes away, then its container and its built image, if they are there.
+// removeApp takes the app's routes away, then its Pod and secrets or its container, and its built image, if they are
+// there.
 func (s *System) removeApp(ctx context.Context) error {
 	if s.spec.Kind == Work && s.spec.Router != nil {
 		if err := s.spec.Router.Remove(s.spec.Name, s.spec.Name); err != nil {
 			return fmt.Errorf("down: the routes of %s are still there: %w", s.spec.Name, err)
 		}
+	}
+	if err := s.removeDefined(ctx, s.appName(), s.definedSecrets()); err != nil {
+		return fmt.Errorf("down: %w", err)
 	}
 	for _, name := range []string{s.refusedName(), s.appName()} {
 		made, err := s.containerExists(ctx, name)

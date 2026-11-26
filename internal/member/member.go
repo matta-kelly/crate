@@ -72,15 +72,15 @@ type BuiltOptions struct {
 	Placement machine.Placement
 }
 
-// defaultFolder is the tools member's volume when [tools] volumes is absent.
-const defaultFolder = "node_modules"
+// DefaultFolder is the tools member's volume, and the dev server's, when [tools] volumes is absent.
+const DefaultFolder = "node_modules"
 
 // Tools makes the tools member of a system: the dev image, the checkout at its host path, keep-id, HOME,
 // the checkout's volumes and its [tools] env, and no limit of its own.
 func Tools(o ToolsOptions) Spec {
 	folders := o.Folders
 	if len(folders) == 0 {
-		folders = []string{defaultFolder}
+		folders = []string{DefaultFolder}
 	}
 	volumes := make([]Volume, len(folders))
 	for i, folder := range folders {

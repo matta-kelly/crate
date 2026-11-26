@@ -182,19 +182,25 @@ func (s *System) runArgs(spec member.Spec) []string {
 
 // playOne writes one service's document and plays it alone on the system's network.
 func (s *System) playOne(ctx context.Context, service Service, placement machine.Placement) error {
-	document, err := os.CreateTemp("", "crate-services-*.yaml")
+	return s.playDocument(ctx, service.Document, []string{"--network", s.spec.Name + ":alias=" + service.Alias}, placement)
+}
+
+// playDocument writes a document to a file of its own, readable by crate alone, as it may hold a secret, and plays it
+// with args, in placement.
+func (s *System) playDocument(ctx context.Context, text string, args []string, placement machine.Placement) error {
+	document, err := os.CreateTemp("", "crate-play-*.yaml")
 	if err != nil {
 		return err
 	}
 	defer os.Remove(document.Name())
-	if _, err := document.WriteString(service.Document); err != nil {
+	if _, err := document.WriteString(text); err != nil {
 		document.Close()
 		return err
 	}
 	if err := document.Close(); err != nil {
 		return err
 	}
-	args := []string{"kube", "play", "--network", s.spec.Name + ":alias=" + service.Alias, document.Name()}
+	args = append(append([]string{"kube", "play"}, args...), document.Name())
 	if placement == "" {
 		_, err := s.call(ctx, args...)
 		return err

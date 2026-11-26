@@ -200,3 +200,27 @@ func TestShipImageNeedsTheImageWhereItShipsAndItsRunFiles(t *testing.T) {
 		t.Fatalf("a registry's port is no tag: %v", err)
 	}
 }
+
+func TestDeployHoldsTheDefinitionInPlaceOfTheAppsOwnKeys(t *testing.T) {
+	base := "ship = \"image\"\n[app]\nbuild = \"Containerfile\"\ncommand = \"npm run dev\"\npublish = \"ghcr.io/o/app\"\ndeploy = \"deploy\"\n"
+	d, err := declaration.Parse([]byte(base))
+	if err != nil {
+		t.Fatalf("a definition with no ports of its own, and its run files: expected it read, got %v", err)
+	}
+	if d.App.Deploy != "deploy" {
+		t.Fatalf("read: %+v", d.App)
+	}
+	for _, key := range []string{"env = { A = \"1\" }", "health = \"true\"", "needs = [\"A\"]", "quadlets = \"q\"", "[[app.ports]]\nname = \"web\"\nport = 3000"} {
+		name := strings.Fields(strings.TrimPrefix(key, "[[app."))[0]
+		name = strings.TrimSuffix(name, "]]")
+		t.Run(name, func(t *testing.T) {
+			_, err := declaration.Parse([]byte(base + key + "\n"))
+			if err == nil || !strings.Contains(err.Error(), "[app] deploy holds") || !strings.Contains(err.Error(), name) {
+				t.Fatalf("deploy beside %s: expected an error that names it, got %v", name, err)
+			}
+		})
+	}
+	if _, err := declaration.Parse([]byte(strings.Replace(base, "deploy = \"deploy\"\n", "[[app.ports]]\nname = \"web\"\nport = 3000\n", 1))); err == nil || !strings.Contains(err.Error(), "[app] quadlets or deploy") {
+		t.Fatalf("ship = \"image\" with no run files: expected an error that names quadlets or deploy, got %v", err)
+	}
+}

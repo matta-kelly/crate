@@ -60,6 +60,11 @@ type Port struct {
 // the app's binding: the env each place that runs it must give (the workspace by [tools] env or up -e, a check by
 // env, production by its own), and without which the built image refuses to start. publish is the repository the
 // image ships to when ship is "image", and quadlets the folder of its run files, which ship beside it.
+//
+// deploy is the folder of the app's definition, in place of build's env, health, ports, needs and quadlets:
+// app.yaml, how the app runs everywhere, and each deploy's values, dev.yaml and prod.yaml. Its definition holds
+// the health, the ports and each key a deploy must give; build is the image it runs in a check, command the dev
+// server it runs in a workspace, and app.yaml with prod.yaml are the run files that ship beside the image.
 type App struct {
 	Build    string            `toml:"build"`
 	Command  string            `toml:"command"`
@@ -69,6 +74,7 @@ type App struct {
 	Needs    []string          `toml:"needs"`
 	Publish  string            `toml:"publish"`
 	Quadlets string            `toml:"quadlets"`
+	Deploy   string            `toml:"deploy"`
 }
 
 // ShipImage is the ship that publishes the image a check built and ran, with its run files beside it.
@@ -114,12 +120,29 @@ func Parse(data []byte) (Declaration, error) {
 	if d.Batch < 0 {
 		return Declaration{}, fmt.Errorf("crate.toml: batch is %d: expected a count of changes, 1 or more", d.Batch)
 	}
-	if d.App.Build != "" && len(d.App.Ports) == 0 {
+	if d.App.Deploy != "" {
+		var held []string
+		for key, set := range map[string]bool{"env": d.App.Env != nil, "health": d.App.Health != "", "ports": d.App.Ports != nil,
+			"needs": d.App.Needs != nil, "quadlets": d.App.Quadlets != ""} {
+			if set {
+				held = append(held, key)
+			}
+		}
+		if len(held) > 0 {
+			sort.Strings(held)
+			return Declaration{}, fmt.Errorf("crate.toml: [app] deploy holds the app's definition; [app] %s goes, as its app.yaml and dev.yaml hold it", strings.Join(held, ", "))
+		}
+	}
+	if d.App.Build != "" && d.App.Deploy == "" && len(d.App.Ports) == 0 {
 		return Declaration{}, fmt.Errorf("crate.toml: [app] build has no [[app.ports]]: a built app must say the port it serves")
 	}
 	if d.Ship == ShipImage {
 		var missing []string
-		for key, value := range map[string]string{"[app] build": d.App.Build, "[app] publish": d.App.Publish, "[app] quadlets": d.App.Quadlets} {
+		runFiles := d.App.Quadlets
+		if d.App.Deploy != "" {
+			runFiles = d.App.Deploy
+		}
+		for key, value := range map[string]string{"[app] build": d.App.Build, "[app] publish": d.App.Publish, "[app] quadlets or deploy": runFiles} {
 			if value == "" {
 				missing = append(missing, key)
 			}

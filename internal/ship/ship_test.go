@@ -41,6 +41,40 @@ func TestStampPutsTheTagInEachImageLine(t *testing.T) {
 	}
 }
 
+func TestStampPutsTheTagInEachImageOfADefinition(t *testing.T) {
+	files, err := Stamp([]File{
+		{"app.yaml", []byte("spec:\n  initContainers:\n    - name: migrate\n      image: ghcr.io/o/app:VERSION\n  containers:\n    - image: ghcr.io/o/app:VERSION\n      name: app\n")},
+		{"prod.yaml", []byte("kind: ConfigMap\n")},
+	}, "412")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "spec:\n  initContainers:\n    - name: migrate\n      image: ghcr.io/o/app:412\n  containers:\n    - image: ghcr.io/o/app:412\n      name: app\n"
+	if got := string(files[0].Data); got != want {
+		t.Fatalf("stamped: %q", got)
+	}
+}
+
+func TestADefinitionShipsAsAKubeAndTheTwoFilesItPlays(t *testing.T) {
+	files, err := Definition("shop", []File{{"app.yaml", []byte("kind: Pod\n")}, {"prod.yaml", []byte("kind: ConfigMap\n")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, f := range files {
+		got[f.Name] = string(f.Data)
+	}
+	if got["shop.yaml"] != "kind: Pod\n" || got["shop.prod.yaml"] != "kind: ConfigMap\n" || len(got) != 3 {
+		t.Fatalf("files: %v", got)
+	}
+	if kube := got["shop.kube"]; !strings.Contains(kube, "[Kube]\nYaml=shop.yaml\nConfigMap=shop.prod.yaml\n") {
+		t.Fatalf("shop.kube: %q", kube)
+	}
+	if _, err := Definition("shop", []File{{"app.yaml", nil}}); err == nil {
+		t.Fatal("a definition with no prod.yaml: expected a refusal")
+	}
+}
+
 func TestStampRefusesAVersionLeftOver(t *testing.T) {
 	for name, files := range map[string][]File{
 		"in the middle of an image": {{"app.container", []byte("Image=ghcr.io/o/app:VERSION-x\n")}},

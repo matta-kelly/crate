@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/matta-kelly/crate/internal/process"
 	"github.com/matta-kelly/crate/internal/record"
 	"github.com/matta-kelly/crate/internal/ship"
+	"github.com/matta-kelly/crate/internal/system"
 )
 
 // Ship: a repo whose crate.toml says ship = "image" publishes each green main's app, the image its check built and
@@ -155,9 +157,23 @@ func (r *Repo) publishImage(commit string, decl declaration.Declaration, out io.
 	step.End(nil, image)
 
 	step = rec.Step(record.RunFiles)
-	files, err := r.runFiles(commit, decl.App.Quadlets)
+	folder, only := decl.App.Quadlets, []string(nil)
+	if decl.App.Deploy != "" {
+		// the definition and production's values: a workspace's dev.yaml stays in the repo
+		folder, only = decl.App.Deploy, []string{system.DefinitionFile, system.ProdValuesFile}
+	}
+	name := decl.Name
+	if name == "" {
+		name = r.Name()
+	}
+	files, err := r.runFiles(commit, folder, only)
 	if err != nil {
 		return fail(step, err)
+	}
+	if decl.App.Deploy != "" {
+		if files, err = ship.Definition(name, files); err != nil {
+			return fail(step, err)
+		}
 	}
 	if files, err = ship.Stamp(files, tag); err != nil {
 		return fail(step, err)
@@ -182,10 +198,6 @@ func (r *Repo) publishImage(commit string, decl declaration.Declaration, out io.
 	}
 	step.End(nil, ship.Artifact(decl.App.Publish)+"@"+pushed.Digest)
 
-	name := decl.Name
-	if name == "" {
-		name = r.Name()
-	}
 	pin := ship.Pin(name, tag, ship.Artifact(decl.App.Publish), pushed.Digest)
 	if err := os.WriteFile(r.state("ship", "published"), []byte(commit+"\n"), 0o644); err != nil {
 		return fail(step, err)
@@ -195,16 +207,20 @@ func (r *Repo) publishImage(commit string, decl declaration.Declaration, out io.
 	return nil
 }
 
-// runFiles is the files of folder at commit, read from the bare repo. The folder holds only files.
-func (r *Repo) runFiles(commit, folder string) ([]ship.File, error) {
+// runFiles is the files of folder at commit, read from the bare repo: every file, or with only those it names, each
+// of which must be there. The folder holds only files.
+func (r *Repo) runFiles(commit, folder string, only []string) ([]ship.File, error) {
 	folder = path.Clean(folder)
 	list, err := r.git("ls-tree", commit+":"+folder)
 	if err != nil {
-		return nil, fmt.Errorf("the run files: [app] quadlets %s is not a folder at %s", folder, short(commit))
+		return nil, fmt.Errorf("the run files: %s is not a folder at %s", folder, short(commit))
 	}
 	var files []ship.File
 	for _, line := range lines(list) {
 		meta, name, _ := strings.Cut(line, "\t")
+		if only != nil && !slices.Contains(only, name) {
+			continue
+		}
 		fields := strings.Fields(meta)
 		if len(fields) != 3 || fields[1] != "blob" {
 			return nil, fmt.Errorf("the run files: %s/%s is not a file; the folder holds only files", folder, name)
@@ -217,6 +233,11 @@ func (r *Repo) runFiles(commit, folder string) ([]ship.File, error) {
 			return nil, fmt.Errorf("the run files: %s/%s: %w", folder, name, err)
 		}
 		files = append(files, ship.File{Name: name, Data: data})
+	}
+	for _, name := range only {
+		if !slices.ContainsFunc(files, func(f ship.File) bool { return f.Name == name }) {
+			return nil, fmt.Errorf("the run files: %s/%s is not there at %s", folder, name, short(commit))
+		}
 	}
 	return files, nil
 }
