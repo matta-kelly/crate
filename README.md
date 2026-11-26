@@ -110,9 +110,10 @@ crate does not run.
   `[slice] memory` (a share, `"25%"`, or a size, `"8G"`) and `[router] address` (the IP the workspace router
   listens on, such as the node's mesh address, so the node's proxy reaches it), and a key crate does not know is an
   error. No file is the defaults: a count of 1 for each kind, a quarter of the memory, and the router on 127.0.0.1
-- crate's own lasting processes: a queue worker or a postsubmit, detached from the push or the unit that starts it,
-  runs in a scope of crate's slice, so the end of a oneshot unit (a timer's `crate apply`) does not stop it. The scope
-  is proven first: a user manager that does not answer fails the start, and the error says so
+- crate's own lasting processes: a queue worker, a postsubmit, a publish or the dev image cache, detached from the push
+  or the unit that starts it, runs as a service of the user's manager in crate's slice, so the end of a oneshot unit (a
+  timer's `crate apply`) does not stop it. The start waits until it runs: a manager that does not answer, or a service
+  that does not start, fails it, and the error says so
 - a remote engine (`CONTAINER_HOST`): its work runs on the engine's machine, so crate places nothing, holds nothing,
   and says so once
 

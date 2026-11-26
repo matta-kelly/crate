@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"syscall"
 
@@ -80,19 +81,27 @@ func (r *Repo) startPostsubmit() error {
 	return r.detach("postsubmit/run.log", "postsubmit", r.Bare)
 }
 
-// detach starts crate with args in its own session and its own scope (machine.Own), with no tie to the hook or unit
-// that starts it, so a push does not wait for it, and neither a closed connection nor the end of a oneshot unit stops
-// it. Its output is appended to the state file log.
+// detach starts crate with args with no tie to the hook or unit that starts it, so a push does not wait for it, and
+// neither a closed connection nor the end of a oneshot unit stops it. Its output is appended to the state file log.
+//
+// On this machine it is a service of the user's manager, in crate's own slice (machine.Own), and the call that starts
+// it waits until it runs: so a start that fails is this error, never a "started" that is not, and the worker is the
+// manager's from its first instant. A scope could not be that: its systemd-run is the caller's child until the manager
+// has made the scope, and a timer's crate apply that ended first took it down with the unit. Behind a remote engine it
+// is a child in a session of its own.
 func (r *Repo) detach(log string, args ...string) error {
 	self, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(r.state(log), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	path, err := filepath.Abs(r.state(log))
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	dir, err := filepath.Abs(r.Bare)
+	if err != nil {
+		return err
+	}
 	// git hands its hooks more open files than stdin, stdout and stderr, and waits for the push until every copy of
 	// them is closed: the child must not keep one.
 	if fds, err := os.ReadDir("/proc/self/fd"); err == nil {
@@ -102,23 +111,22 @@ func (r *Repo) detach(log string, args ...string) error {
 			}
 		}
 	}
-	// In a scope of crate's own slice, so a oneshot unit that started it (a timer's crate apply) does not take it down
-	// when the unit ends, and it is under crate's line. The scope is proven first, with a call that waits: a detached
-	// child that fails cannot say so, so a manager that does not answer fails here, loud, and never falls back to a
-	// child the unit's end would kill.
-	own := machine.Own()
-	if own != "" {
-		prog, argv, env := own.Command("true")
-		if _, err := process.Combined(context.Background(), process.Call{Prog: prog, Args: argv, Env: env,
-			Limit: limit.Systemd()}); err != nil {
-			return fmt.Errorf("crate's own slice %s: the user's manager did not make a scope (it is found at $XDG_RUNTIME_DIR/bus): %w",
-				own, err)
+	if own := machine.Own(); own != "" {
+		prog, argv, env := own.Service(path, dir, self, args...)
+		if _, err := process.Combined(context.Background(), process.Call{Name: "systemd-run", Prog: prog, Args: argv,
+			Env: env, Limit: limit.Systemd()}); err != nil {
+			return fmt.Errorf("crate %s did not start in crate's own slice %s: the user's manager (found at $XDG_RUNTIME_DIR/bus): %w",
+				args[0], own, err)
 		}
+		return nil
 	}
-	prog, argv, env := own.Command(self, args...)
-	cmd := exec.Command(prog, argv...)
-	cmd.Env = env
-	cmd.Dir = r.Bare
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	cmd := exec.Command(self, args...)
+	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = f, f
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {

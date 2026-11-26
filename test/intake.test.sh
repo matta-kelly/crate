@@ -72,6 +72,33 @@ git -C "$tmp/github/a.git" update-ref -d refs/heads/renovate/x
 if ! git -C "$bare" rev-parse -q --verify refs/intake/renovate/x >/dev/null; then ok "a branch gone from GitHub leaves refs/intake"
 else not_ok "a branch gone from GitHub leaves refs/intake"; fi
 
+# A worker that a timer's crate apply starts outlives the oneshot unit it ran in: apply runs in a transient oneshot
+# service, as crate-apply.service does, and the head it enters still gets its verdict after the unit has ended.
+verdict() { # the last line of a change's log once it is a verdict, waiting for it up to 60 s
+
+  for _ in $(seq 120); do
+    if tail -n1 "$bare/crate/queue/$1.log" 2>/dev/null | grep -q "^crate: \(landed\|not landed\)"; then
+      tail -n1 "$bare/crate/queue/$1.log"
+      return 0
+    fi
+    sleep 0.5
+  done
+  return 1
+}
+verdict "$bump" >/dev/null # the worker before it has ended, so this apply starts its own
+git -C "$tmp/client" commit -q --allow-empty -m "chore(deps): a bump from a timer"
+git -C "$tmp/client" push -q "$tmp/github/a.git" bot:refs/heads/renovate/w
+timer=$(git -C "$tmp/client" rev-parse HEAD)
+printf '%s\n' "$conf" >"$tmp/crate.env"
+env_args=()
+for name in PATH HOME XDG_STATE_HOME XDG_CONFIG_HOME CRATE_SLICE GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL; do
+  [ -n "${!name:-}" ] && env_args+=("--setenv=$name=${!name}")
+done
+out=$(systemd-run --user --wait --quiet --collect -p Type=oneshot "${env_args[@]}" "$root/bin/crate" apply "$tmp/crate.env" 2>&1)
+if verdict "$timer" >/dev/null; then ok "a worker that apply starts in a oneshot unit outlives the unit: the head gets its verdict"
+else not_ok "a worker that apply starts in a oneshot unit outlives the unit: the head gets its verdict" \
+  "$out; log: $(cat "$bare/crate/queue/$timer.log" 2>&1); worker: $(tail -5 "$bare/crate/worker.log" 2>&1)"; fi
+
 if out=$("$root/bin/crate" apply - <<<"GIT_HOME=$tmp/git
 GITHUB_BASE=$tmp/github
 REPOS=a

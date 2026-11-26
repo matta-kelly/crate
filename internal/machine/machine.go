@@ -6,6 +6,7 @@ package machine
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 // The four kinds of a claim on the machine.
@@ -34,6 +35,28 @@ func CheckKind(kind string) error {
 
 // Placement is a slice name, or "" for none.
 type Placement string
+
+// Service is the call that starts prog with args as a transient service of the user's manager in the placement, with
+// this process's environment, dir its working folder, and its output appended to log. systemd-run returns once prog
+// runs (Type=exec), so a start that fails is the call's error, and from then on prog is the manager's: it outlives the
+// caller, its session and its unit. Not for the placement "" (a remote engine's), which has no manager of this
+// machine.
+func (p Placement) Service(log, dir, prog string, args ...string) (string, []string, []string) {
+	argv := []string{"--user", "--quiet", "--collect", "--property=Type=exec", "--slice=" + string(p),
+		"--working-directory=" + dir, "--property=StandardOutput=append:" + log, "--property=StandardError=append:" + log}
+	for _, kv := range os.Environ() {
+		if name, _, _ := strings.Cut(kv, "="); !unitEnv[name] {
+			argv = append(argv, "--setenv="+kv)
+		}
+	}
+	argv = append(append(argv, "--", prog), args...)
+	return "systemd-run", argv, managerEnv()
+}
+
+// unitEnv is what systemd gives a unit's process of its own: a service gets its own anew, not its caller's.
+var unitEnv = map[string]bool{"INVOCATION_ID": true, "JOURNAL_STREAM": true, "NOTIFY_SOCKET": true, "LISTEN_PID": true,
+	"LISTEN_FDS": true, "LISTEN_FDNAMES": true, "MANAGERPID": true, "SYSTEMD_EXEC_PID": true, "WATCHDOG_PID": true,
+	"WATCHDOG_USEC": true}
 
 // Command is the call that runs prog with args in the placement: the call as it is with none, else systemd-run's,
 // which runs prog in a scope of its own in the slice. prog stays the caller's child, with its stdin, its output and
