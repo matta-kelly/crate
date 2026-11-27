@@ -28,7 +28,7 @@ type verb func(args []string) error
 var verbs = map[string]verb{}
 
 // server are the verbs that run on the git server, as its account: their record also goes to the system journal.
-var server = map[string]bool{"apply": true, "hook": true, "queue": true, "postsubmit": true, "ship": true, "cache": true}
+var server = map[string]bool{"apply": true, "hook": true, "queue": true, "postsubmit": true, "ship": true, "cache": true, "images": true}
 
 func register(name string, v verb) { verbs[name] = v }
 

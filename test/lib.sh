@@ -43,16 +43,16 @@ queue() { git push -o crate.wait=no "$tmp/repo.git" "HEAD:refs/queue/$(git rev-p
 settle() {
   local quiet=0
   for _ in $(seq 1 300); do
-    if pgrep -f "crate (queue|postsubmit|ship|cache) $tmp/repo.git" >/dev/null; then quiet=0; else quiet=$((quiet + 1)); fi
+    if pgrep -f "crate (queue|postsubmit|ship|cache|images) $tmp/repo.git" >/dev/null; then quiet=0; else quiet=$((quiet + 1)); fi
     [ "$quiet" -lt 3 ] || return 0
     sleep 0.2
   done
-  echo "# settle: crate's worker, postsubmit, publish or cache still runs after a minute: $(pgrep -fa "crate (queue|postsubmit|ship|cache) $tmp/repo.git" | head -3)"
+  echo "# settle: crate's worker, postsubmit, publish or cache still runs after a minute: $(pgrep -fa "crate (queue|postsubmit|ship|cache|images) $tmp/repo.git" | head -3)"
 }
 
 # sweep: what the suite's runs leave on the engine: the workers, and the kept volumes of its systems.
 sweep() {
-  pkill -f "crate (queue|postsubmit|ship|cache) $tmp" 2>/dev/null
+  pkill -f "crate (queue|postsubmit|ship|cache|images) $tmp" 2>/dev/null
   rm -rf "$tmp"
   "$engine" volume ls -q | grep -E '^crate-repo-(check-[0-9]+|postsubmit)-' | xargs -r "$engine" volume rm -f >/dev/null 2>&1
 }

@@ -16,6 +16,7 @@ func init() {
 	register("postsubmit", postsubmitVerb)
 	register("ship", shipVerb)
 	register("cache", cacheVerb)
+	register("images", imagesVerb)
 }
 
 const (
@@ -142,6 +143,22 @@ func cacheVerb(args []string) error {
 		return err
 	}
 	if err := r.Cache(os.Stdout); err != nil {
+		return commandExit(1)
+	}
+	return nil
+}
+
+// imagesVerb publishes each declared image of the green main not yet published (gate.Images). Its output is the run's;
+// detached, it goes to <bare>/crate/images/run.log.
+func imagesVerb(args []string) error {
+	if len(args) != 1 {
+		return usagef("crate images <bare repo>")
+	}
+	r, err := gate.Open(args[0])
+	if err != nil {
+		return err
+	}
+	if err := r.Images(os.Stdout); err != nil {
 		return commandExit(1)
 	}
 	return nil

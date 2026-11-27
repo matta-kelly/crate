@@ -86,6 +86,7 @@ inputs = [".crate/Containerfile", "pnpm-lock.yaml", "package.json"]
 - the merge queue's keys: `crate`, `image`, `timeout`, `batch`, `ship`, `packages`, `postsubmit`, `postsubmit_timeout`
   ([The merge queue](#the-merge-queue)); and, for `ship = "image"`, `[app] publish`, the repository the image ships to
   (`ghcr.io/<owner>/<name>`, no tag), and `[app] quadlets` or `deploy`, the folder of its run files ([The ship](#the-ship))
+- `[[images]]`: the images the repo publishes for a node or another repo to pin ([Declared images](#declared-images))
 
 ## The definition
 
@@ -303,12 +304,39 @@ it, so a node runs what crate tested. Nothing on GitHub builds it again.
   a newer one superseded, a run that passed and never landed. A green main with no kept image (one that landed before
   its repo shipped its image) has nothing to publish; the next main that lands has
 
+## Declared images
+
+An image a repo publishes that is not its app: a node's bootc image, or an image a node runs, such as a custom Caddy.
+
+```toml
+[[images]]
+publish = "ghcr.io/matta-kelly/caddy-cloudflare"   # its repository, no tag
+containerfile = "images/caddy-cloudflare/Containerfile"
+inputs = ["images/caddy-cloudflare"]               # the paths it is built from: they must hold the containerfile
+point = "latest"                                   # a tag that follows its newest build; for a reader with no pin
+```
+
+- the build: a rootless `podman build` of the commit's tree as git holds it, never a checkout. Each file has git's
+  mode (0644, or 0755 for an executable) whatever the machine's umask, and the build makes no `/etc/hostname` of its
+  own (`--no-hostname`), so a `RUN` step that writes one keeps it. The same commit builds the same image anywhere.
+  crate runs only `podman build`: no command of the repo's runs on the machine
+- the check: a run whose changes touch an image's inputs builds it, after `scripts/check.sh` passes, and keeps it on
+  this machine as `localhost/crate-<repo>-image-<name>:<hash of its inputs>`. A build that fails refuses the change
+- the tag: the build number of the last main that changed the inputs, the count of main's first-parent commits up to
+  it. The same inputs keep the same tag, so a change elsewhere in the repo, a pin bump among them, publishes nothing:
+  no loop where a pin's change rebuilds what it pins. A later change to the inputs has a larger number, so an update bot
+  orders the tags as versions
+- the publish: a green main pushes each image whose `<publish>:<tag>` is not published yet, the kept build, else one
+  from that main, then moves `point` to it, from a process of its own (`crate images <bare>`), started by the land, the
+  worker's start and `crate apply`. It logs in by the push login ([The ship](#the-ship)). Its state is in
+  `<bare>/crate/images`: `published`, each `<publish>:<tag>` pushed, one a line; `run.log`, the runs' output
+
 ## The record
 
 crate's record of what it did and how long each part took: one JSON line per step of a run, appended as the step
 ends, and a total line when the run ends. A run is one thing crate does: a check, a change's land through the queue,
 a postsubmit, an `up`, a copy to GitHub (mirror), a release (a version, or an image's publish), a push of dev images
-(cache) or a commit status (status).
+(cache), a declared image's publish (image) or a commit status (status).
 
 - the files
   - the queue: `<bare>/crate/log.jsonl`, each check, land, postsubmit, mirror, release, cache, intake and status of that repo

@@ -16,7 +16,7 @@ build:
 check: build
     go vet ./...
     go test ./...
-    "${CRATE_ENGINE:-podman}" run --rm -v "$PWD:/src:ro" -w /src {{shellcheck}} hooks/pre-receive hooks/post-receive test/lib.sh test/hooks.test.sh test/apply.test.sh test/release.test.sh test/postsubmit.test.sh test/land.test.sh test/ship.test.sh test/cache.test.sh test/intake.test.sh
+    "${CRATE_ENGINE:-podman}" run --rm -v "$PWD:/src:ro" -w /src {{shellcheck}} hooks/pre-receive hooks/post-receive test/lib.sh test/hooks.test.sh test/apply.test.sh test/release.test.sh test/postsubmit.test.sh test/land.test.sh test/ship.test.sh test/cache.test.sh test/intake.test.sh test/images.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/hooks.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/apply.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/release.test.sh
@@ -25,6 +25,7 @@ check: build
     CRATE_ROOT="$PWD/dist/crate" test/ship.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/cache.test.sh
     CRATE_ROOT="$PWD/dist/crate" test/intake.test.sh
+    CRATE_ROOT="$PWD/dist/crate" test/images.test.sh
 
 # A new version: check, tag v<version>, move the major tag, put the asset on both releases. --dry-run only builds dist/crate-linux-amd64.tar.gz
 release version *flags:

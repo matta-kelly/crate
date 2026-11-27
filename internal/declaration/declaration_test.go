@@ -224,3 +224,34 @@ func TestDeployHoldsTheDefinitionInPlaceOfTheAppsOwnKeys(t *testing.T) {
 		t.Fatalf("ship = \"image\" with no run files: expected an error that names quadlets or deploy, got %v", err)
 	}
 }
+
+// [[images]] reads as a list of images, each with its publish, containerfile, inputs and point.
+func TestTheImageTableReadsAsAList(t *testing.T) {
+	d, err := declaration.Parse([]byte("[[images]]\npublish = \"ghcr.io/o/a\"\ncontainerfile = \"a/Containerfile\"\ninputs = [\"a\"]\npoint = \"latest\"\n\n" +
+		"[[images]]\npublish = \"ghcr.io/o/b\"\ncontainerfile = \"b.Containerfile\"\ninputs = [\"b.Containerfile\", \"b\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Images) != 2 || d.Images[0].Point != "latest" || d.Images[1].Inputs[1] != "b" {
+		t.Errorf("images: %+v", d.Images)
+	}
+}
+
+// An [[images]] crate cannot build is refused, and the error says why.
+func TestAnImageCrateCannotBuildIsRefused(t *testing.T) {
+	for want, body := range map[string]string{
+		"has no publish":              "[[images]]\ncontainerfile = \"C\"\ninputs = [\"C\"]\n",
+		"has a tag":                   "[[images]]\npublish = \"ghcr.io/o/a:1\"\ncontainerfile = \"C\"\ninputs = [\"C\"]\n",
+		"has no containerfile":        "[[images]]\npublish = \"ghcr.io/o/a\"\ninputs = [\"C\"]\n",
+		"has no inputs":               "[[images]]\npublish = \"ghcr.io/o/a\"\ncontainerfile = \"C\"\n",
+		"leave out its containerfile": "[[images]]\npublish = \"ghcr.io/o/a\"\ncontainerfile = \"x/C\"\ninputs = [\"y\"]\n",
+		"two [[images]] publish":      "[[images]]\npublish = \"ghcr.io/o/a\"\ncontainerfile = \"C\"\ninputs = [\"C\"]\n[[images]]\npublish = \"ghcr.io/o/a\"\ncontainerfile = \"C\"\ninputs = [\"C\"]\n",
+	} {
+		if _, err := declaration.Parse([]byte(body)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: got %v", want, err)
+		}
+	}
+	if _, err := declaration.Parse([]byte("[[images]]\npublish = \"localhost:5000/o/a\"\ncontainerfile = \"x/C\"\ninputs = [\"x\"]\n")); err != nil {
+		t.Errorf("a registry's port is not a tag, and a folder covers its containerfile: %v", err)
+	}
+}

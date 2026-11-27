@@ -92,6 +92,11 @@ func (r *Repo) Release(commit string, out io.Writer) {
 		return
 	}
 	decl := r.declarationAt(main)
+	if len(decl.Images) > 0 {
+		if err := r.StartImages(); err != nil {
+			fmt.Fprintf(out, "crate: the images' publish did not start: %v; crate apply starts it again\n", err)
+		}
+	}
 	if decl.Ship == "" {
 		return
 	}

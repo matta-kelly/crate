@@ -2,7 +2,6 @@ package devimage
 
 import (
 	"context"
-	"crypto/sha256"
 	"fmt"
 	"io"
 	"path"
@@ -118,5 +117,5 @@ func (p *plan) hash() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(entries)))[:16], nil
+	return hashOf(entries), nil
 }

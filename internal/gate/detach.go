@@ -25,7 +25,8 @@ const (
 
 // StartWorker starts the repo's worker, crate queue run <bare>, when changes wait, none runs and the machine is not
 // paused, and says which it found. Its output goes to worker.log. It also starts the publish of a green main not yet
-// published (StartShip), the dev image cache's pending work (StartCache), and a postsubmit that crate could not run
+// published (StartShip), the dev image cache's pending work (StartCache), the declared images not yet published
+// (StartImages), and a postsubmit that crate could not run
 // (startRetry), so none of them, when it cannot start, ever holds the queue.
 func (r *Repo) StartWorker() (string, error) {
 	var ship, cache error
@@ -34,6 +35,10 @@ func (r *Repo) StartWorker() (string, error) {
 	}
 	if err := r.StartCache(); err != nil {
 		cache = fmt.Errorf("the dev image cache did not start: %w", err)
+	}
+	var images error
+	if err := r.StartImages(); err != nil {
+		images = fmt.Errorf("the images' publish did not start: %w", err)
 	}
 	var retry error
 	if err := r.startRetry(); err != nil {
@@ -44,7 +49,7 @@ func (r *Repo) StartWorker() (string, error) {
 	if err != nil {
 		worker = fmt.Errorf("its worker did not start: %w", err)
 	}
-	return state, errors.Join(worker, ship, cache, retry)
+	return state, errors.Join(worker, ship, cache, images, retry)
 }
 
 func (r *Repo) startWorker() (string, error) {

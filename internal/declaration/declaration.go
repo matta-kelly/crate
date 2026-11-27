@@ -83,21 +83,31 @@ const ShipImage = "image"
 // ShipsImage says the repo ships its app's image.
 func (d Declaration) ShipsImage() bool { return d.Ship == ShipImage }
 
+// Image is one [[images]]: an image the repo builds from its own files and publishes, for a node or another repo to
+// pin (internal/gate/images.go).
+type Image struct {
+	Publish       string   `toml:"publish"`       // its repository, with no tag
+	Containerfile string   `toml:"containerfile"` // its recipe, a path in the repo; the repo's tree is the build's context
+	Inputs        []string `toml:"inputs"`        // the paths whose files make it: only a change to one of them builds it again
+	Point         string   `toml:"point"`         // a tag that follows its newest build, for a reader that takes no pin; "" for none
+}
+
 // Declaration is a crate.toml. A flat key it does not hold is empty.
 type Declaration struct {
-	Crate             string `toml:"crate"`
-	Image             string `toml:"image"`
-	Timeout           string `toml:"timeout"`
-	Ship              string `toml:"ship"`
-	Packages          string `toml:"packages"`
-	Postsubmit        string `toml:"postsubmit"`
-	PostsubmitTimeout string `toml:"postsubmit_timeout"`
-	Batch             int    `toml:"batch"`
-	Name              string `toml:"name"`
-	Services          string `toml:"services"`
-	Dev               Dev    `toml:"dev"`
-	Tools             Tools  `toml:"tools"`
-	App               App    `toml:"app"`
+	Crate             string  `toml:"crate"`
+	Image             string  `toml:"image"`
+	Timeout           string  `toml:"timeout"`
+	Ship              string  `toml:"ship"`
+	Packages          string  `toml:"packages"`
+	Postsubmit        string  `toml:"postsubmit"`
+	PostsubmitTimeout string  `toml:"postsubmit_timeout"`
+	Batch             int     `toml:"batch"`
+	Name              string  `toml:"name"`
+	Services          string  `toml:"services"`
+	Dev               Dev     `toml:"dev"`
+	Tools             Tools   `toml:"tools"`
+	App               App     `toml:"app"`
+	Images            []Image `toml:"images"`
 }
 
 var envName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -116,6 +126,9 @@ func Parse(data []byte) (Declaration, error) {
 			return Declaration{}, fmt.Errorf("crate.toml: unknown key %s", strings.Join(keys, ", "))
 		}
 		return Declaration{}, fmt.Errorf("crate.toml: %w", err)
+	}
+	if err := checkImages(d.Images); err != nil {
+		return Declaration{}, err
 	}
 	if d.Batch < 0 {
 		return Declaration{}, fmt.Errorf("crate.toml: batch is %d: expected a count of changes, 1 or more", d.Batch)
@@ -179,4 +192,39 @@ func (d Declaration) BatchSize() int {
 		return d.Batch
 	}
 	return DefaultBatch
+}
+
+// checkImages refuses an [[images]] crate cannot build: one with no publish, a publish with a tag, no containerfile, no
+// inputs or inputs that leave out its containerfile, or a publish two images share.
+func checkImages(images []Image) error {
+	seen := map[string]bool{}
+	for _, img := range images {
+		switch {
+		case img.Publish == "":
+			return fmt.Errorf("crate.toml: an [[images]] has no publish: its repository")
+		case strings.Contains(img.Publish[strings.LastIndex(img.Publish, "/")+1:], ":"):
+			return fmt.Errorf("crate.toml: [[images]] publish %s has a tag: crate tags each build", img.Publish)
+		case seen[img.Publish]:
+			return fmt.Errorf("crate.toml: two [[images]] publish %s", img.Publish)
+		case img.Containerfile == "":
+			return fmt.Errorf("crate.toml: [[images]] %s has no containerfile", img.Publish)
+		case len(img.Inputs) == 0:
+			return fmt.Errorf("crate.toml: [[images]] %s has no inputs: the files it is built from", img.Publish)
+		case !covers(img.Inputs, img.Containerfile):
+			return fmt.Errorf("crate.toml: [[images]] %s inputs leave out its containerfile %s", img.Publish, img.Containerfile)
+		}
+		seen[img.Publish] = true
+	}
+	return nil
+}
+
+// covers says one of the paths is file, or a folder that holds it.
+func covers(paths []string, file string) bool {
+	for _, p := range paths {
+		p = strings.TrimSuffix(p, "/")
+		if p == file || strings.HasPrefix(file, p+"/") {
+			return true
+		}
+	}
+	return false
 }

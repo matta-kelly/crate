@@ -48,6 +48,9 @@ func (r *Repo) checkRun(ctx context.Context, rn *run) error {
 	rec := r.begin("check", r.slotSystem(rn.slot), rn.tip, out)
 	err = r.run(ctx, rec, system.Check, r.slotSystem(rn.slot), dir, decl, seconds(decl.Timeout, 900),
 		[]string{"CHECK_BASE=" + rn.base}, nil, out)
+	if err == nil {
+		err = r.buildImages(ctx, dir, rn.base, decl, rec, out)
+	}
 	note := strings.Join(shorts(rn.shas()), " ")
 	switch {
 	case ctx.Err() != nil:
