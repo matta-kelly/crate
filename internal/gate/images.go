@@ -178,6 +178,7 @@ func (r *Repo) publishDeclared(main string, img declaration.Image, tag string, o
 	}
 	step.End(nil, ref)
 	rec.End(record.Pass, ref)
+	r.event(EventPublished, main)
 	fmt.Fprintf(out, "crate: published %s\n", ref)
 	return nil
 }

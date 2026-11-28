@@ -331,6 +331,16 @@ point = "latest"                                   # a tag that follows its newe
   worker's start and `crate apply`. It logs in by the push login ([The ship](#the-ship)). Its state is in
   `<bare>/crate/images`: `published`, each `<publish>:<tag>` pushed, one a line; `run.log`, the runs' output
 
+## Events
+
+crate says on its server what it did, so the step that follows need not wait for its timer: a file under
+`$XDG_RUNTIME_DIR/crate/events` (`/run/user/<uid>` when unset) gets a line, `<repo> <commit> <time>`, each time it
+happens, and a systemd path unit that watches it starts what follows. Nothing waits on an event, and none is needed:
+each watcher's timer still runs.
+
+- `published`: an image went to its registry, a green main's or a declared one's, so an update bot can propose it
+- `mirrored-<repo>`: the repo's main went to its GitHub copy, so a node that pulls it can sync
+
 ## The record
 
 crate's record of what it did and how long each part took: one JSON line per step of a run, appended as the step

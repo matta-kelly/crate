@@ -203,6 +203,7 @@ func (r *Repo) publishImage(commit string, decl declaration.Declaration, out io.
 		return fail(step, err)
 	}
 	rec.End(record.Pass, pin)
+	r.event(EventPublished, commit)
 	fmt.Fprintf(out, "crate: published %s as %s; the pin line:\n%s\n", short(commit), image, pin)
 	return nil
 }

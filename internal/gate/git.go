@@ -170,7 +170,8 @@ func (r *Repo) FirstVersionCommand(tag string) string {
 	return fmt.Sprintf("git -C %s tag %s <commit>", r.Bare, tag)
 }
 
-// CopyMain pushes commit to github's main, when the bare repo has the remote, and logs the copy.
+// CopyMain pushes commit to github's main, when the bare repo has the remote, logs the copy, and says so (the event
+// mirrored-<repo>).
 func (r *Repo) CopyMain(commit string) error {
 	if !r.hasGithub() {
 		return nil
@@ -181,5 +182,6 @@ func (r *Repo) CopyMain(commit string) error {
 		return err
 	}
 	rec.End(record.Pass, "")
+	r.event(eventMirrored+r.Name(), commit)
 	return nil
 }
